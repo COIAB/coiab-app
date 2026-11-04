@@ -1,13 +1,34 @@
-# CoMapeo Mobile
+# CoiabApp
 
-The next version of Mapeo Mobile
+Aplicativo da Coordenação das Organizações Indígenas da Amazônia Brasileira
+(COIAB) para coleta de dados territoriais indígenas, desenvolvido pela Transistir.
+CoiabApp é o nome provisório do projeto, também referido como Kutary e Ekanâdyby.
+
+## Base tecnológica: CoMapeo
+
+Este aplicativo é uma versão derivada do software livre
+[CoMapeo Mobile](https://github.com/digidem/comapeo-mobile), do projeto
+[CoMapeo](https://comapeo.app/). As adaptações para a COIAB incluem identidade
+visual, navegação, uma camada de organizações com áreas de Monitoramento e
+Alertas, e informações de etnia e aldeia no cadastro e nos metadados das
+observações. O núcleo de dados e colaboração utiliza os componentes do CoMapeo.
+
+O desenvolvimento é acompanhado em
+[transistir/coiab-app](https://github.com/transistir/coiab-app); o repositório
+institucional é [COIAB/coiab-app](https://github.com/COIAB/coiab-app).
+Consulte [LICENSE](./LICENSE) para a licença GNU GPL v3 e preserve os avisos
+aplicáveis ao projeto original e às suas dependências.
+
+Para gerar e obter um APK, consulte [docs/ApkBuild.md](./docs/ApkBuild.md).
+As instruções técnicas abaixo são mantidas a partir da documentação do CoMapeo;
+use o repositório e a revisão correspondentes à versão que pretende executar.
 
 ## Getting started
 
 1. Clone repository
 
    ```sh
-   git clone https://github.com/digidem/comapeo-mobile.git
+   git clone https://github.com/COIAB/coiab-app.git
    ```
 
 2. Set up the development environment
@@ -60,16 +81,10 @@ The next version of Mapeo Mobile
    4. Build and run the app (Android)
       - For this project, using a physical device is more convenient and reliable to work with. It is recommended that you follow React Native's [setup instructions](https://reactnative.dev/docs/running-on-device) for running an app on a device.
 
-      - Run the following command to build the backend and then build and run the Android app:
+      - Run the following command to build and run the Android app with Expo:
 
         ```sh
         npm run android
-        ```
-
-        If you do not need to rebuild the backend on subsequent runs (e.g. no changes in the `src/backend/` directory), you can use the following command instead:
-
-        ```sh
-        npm run android-no-backend-rebuild
         ```
 
    5. Build and install on a physical iOS device
