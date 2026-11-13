@@ -1,3 +1,4 @@
+import isEqual from 'lodash.isequal';
 import {createStore} from 'zustand';
 import type {CoiabOrganizationsStore} from '../../contexts/CoiabOrganizationsStoreContext';
 import {
@@ -9,8 +10,27 @@ import {
   AREAS,
   parseEstadoOrganizacoes,
   type Area,
+  type EstadoOrganizacoes,
   type OrganizacaoLocal,
 } from './coiabOrganizations';
+
+// #147 item 3: a remote-archive checkpoint can rewrite ONLY `arquivoRemoto`
+// while a role validation is in flight. That journal block is not read by the
+// activation that follows (it publishes from the captured document's `ativa`
+// and materialization), so a change confined to it must not abort the attempt
+// as `document-changed`. Project both documents without the block and compare
+// them structurally; any change to `ativa`, areas, roles, organization state,
+// list membership or confirmation still invalidates.
+function semArquivoRemoto(estado: EstadoOrganizacoes): EstadoOrganizacoes {
+  return {
+    ...estado,
+    organizacoes: estado.organizacoes.map(org => {
+      const {arquivoRemoto, ...resto} = org;
+      void arquivoRemoto;
+      return resto;
+    }),
+  };
+}
 
 export type ActivationStatus =
   | 'loading'
@@ -253,7 +273,12 @@ export function createOrganizationActivation({
         await cancelPresentation(originIds);
       }
       if (workBlocks()) throw new Error('pending-work');
-      if (store.instance.getState() !== document)
+      if (
+        !isEqual(
+          semArquivoRemoto(store.instance.getState()),
+          semArquivoRemoto(document),
+        )
+      )
         throw new Error('document-changed');
       // SPEC A §4.2 regra 9 / FIX-A: the acknowledgment records the area
       // Monitoramento in the SAME single write as confirmacaoPendente:false —
@@ -436,7 +461,17 @@ export function createOrganizationActivation({
     const org = store.instance
       .getState()
       .organizacoes.find(item => item.id === id);
-    if (!org || org.estado === 'pronta') return false;
+    if (!org) return false;
+    // #142 fase B: a `pronta` organization whose archive step is still
+    // pending stays retomável through this SAME adapter, but it is NOT a
+    // preparation: its journal must not be downgraded to `preparando` and no
+    // second materialization loop may start. Only the archive step runs.
+    const arquivoPendente =
+      org.arquivoRemoto !== undefined &&
+      org.arquivoRemoto.estado !== 'concluido' &&
+      org.arquivoRemoto.estado !== 'removido';
+    const prontaComArquivo = org.estado === 'pronta' && arquivoPendente;
+    if (org.estado === 'pronta' && !arquivoPendente) return false;
     // SPEC A §4.2 regra 7: 'falha_recuperavel' is recorded when a resume was
     // ATTEMPTED and failed. A missing adapter is absent capability, not a
     // failed attempt: the organization stays exactly as persisted
@@ -449,12 +484,14 @@ export function createOrganizationActivation({
       });
       return false;
     }
-    store.instance.setState(state => ({
-      organizacoes: state.organizacoes.map(item =>
-        item.id === id ? {...item, estado: 'preparando' as const} : item,
-      ),
-    }));
-    publish({status: 'preparing'});
+    if (!prontaComArquivo) {
+      store.instance.setState(state => ({
+        organizacoes: state.organizacoes.map(item =>
+          item.id === id ? {...item, estado: 'preparando' as const} : item,
+        ),
+      }));
+      publish({status: 'preparing'});
+    }
     try {
       await resumePreparation(id);
       const completed = store.instance
@@ -462,7 +499,9 @@ export function createOrganizationActivation({
         .organizacoes.find(item => item.id === id);
       if (completed?.estado !== 'pronta')
         throw new Error('preparation-incomplete');
-      publish({status: 'confirmation'});
+      // The archive-only path must not publish a preparation/confirmation
+      // status over an already ready context.
+      if (!prontaComArquivo) publish({status: 'confirmation'});
       return true;
     } catch {
       // Publication may have succeeded before the adapter's late rejection.
@@ -472,7 +511,8 @@ export function createOrganizationActivation({
         .getState()
         .organizacoes.find(item => item.id === id);
       if (completed?.estado === 'pronta') {
-        publish({status: 'confirmation', error: undefined});
+        if (!prontaComArquivo)
+          publish({status: 'confirmation', error: undefined});
         return true;
       }
       store.instance.setState(state => ({

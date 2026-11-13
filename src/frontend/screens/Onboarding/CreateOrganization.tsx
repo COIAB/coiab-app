@@ -3,6 +3,7 @@ import {
   BackHandler,
   Keyboard,
   KeyboardAvoidingView,
+  Pressable,
   StyleSheet,
   TextInput,
   TouchableWithoutFeedback,
@@ -10,12 +11,14 @@ import {
 } from 'react-native';
 import {defineMessages, useIntl} from 'react-intl';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
+import MaterialIcons from '@react-native-vector-icons/material-icons';
+import {useNetInfo} from '@react-native-community/netinfo';
 
 import {HeaderText} from '../../sharedComponents/Text/HeaderText';
 import {BodyText} from '../../sharedComponents/Text/BodyText';
 import {PrimaryButton} from '../../sharedComponents/Buttons';
 import {LoadingIndicator} from '../../sharedComponents/LoadingIndicator';
-import {BLACK, LIGHT_GREY} from '../../lib/styles';
+import {BLACK, COMAPEO_BLUE, DARK_GREEN, LIGHT_GREY} from '../../lib/styles';
 import {useOrganizationMaterializer} from '../../contexts/OrganizationMaterializerContext';
 import {
   useCoiabOrganizationsState,
@@ -29,6 +32,9 @@ import {markerFor} from '../../lib/organization/marker';
 import {ErroPacote} from '../../lib/organization/pacotes';
 import {OrganizationOperationError} from '../../lib/organization/fanout';
 import {AppStackParamsList} from '../../sharedTypes/navigation';
+import territoriesData from '../../lib/territories.json';
+import {useValidarArquivoRemoto} from '../../hooks/server/useValidarArquivoRemoto';
+import {useUserProfileState} from '../../contexts/UserProfileStoreContext';
 
 const m = defineMessages({
   // SPEC B :54/:55: both stages share the title and the submit button
@@ -37,13 +43,13 @@ const m = defineMessages({
   // allowed by the extraction gate).
   createOrganization: {
     id: '$1screens.OrganizationSetup.createOrganization',
-    defaultMessage: 'Create Organization',
+    defaultMessage: 'Create Territory',
   },
   createIntroBody: {
     id: '$1screens.OrganizationSetup.createIntroBody',
-    // SPEC B :54 — verbatim.
+    // en-US de SPEC B :54 (o verbatim é o pt-BR).
     defaultMessage:
-      'Your Organization will have Monitoramento and Alertas, with categories ready to use. You can create it without internet.',
+      'Your Territory will have Monitoring and Alerts, with categories ready to use. You can create it without internet.',
   },
   continueButton: {
     id: '$1screens.OrganizationSetup.continueButton',
@@ -53,34 +59,62 @@ const m = defineMessages({
   nameLabel: {
     id: '$1screens.OrganizationSetup.nameLabel',
     // SPEC B :55 (also the :94 table) — the field label.
-    defaultMessage: 'Organization name',
+    defaultMessage: 'Territory name',
   },
   nameGuidance: {
     id: '$1screens.OrganizationSetup.nameGuidance',
     // SPEC B :55 — verbatim.
-    defaultMessage: 'Choose a name for your Organization.',
+    defaultMessage: 'Choose a name for your Territory.',
   },
   nameNotIdentity: {
     id: '$1screens.OrganizationSetup.nameNotIdentity',
     // SPEC B :55 — verbatim.
     defaultMessage:
-      'Using the same name as another Organization does not connect the devices. To join an existing Organization, wait for an invitation.',
+      'Using the same name as another Territory does not connect the devices. To join an existing Territory, wait for an invitation.',
   },
-  emptyName: {
-    id: '$1screens.OrganizationSetup.emptyName',
-    // SPEC B :252 — verbatim.
-    defaultMessage: 'Enter the Organization name.',
+  archiveUrlLabel: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlLabel',
+    defaultMessage: 'Remote archive URL',
+  },
+  archiveUrlPlaceholder: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlPlaceholder',
+    defaultMessage: 'https://…',
+  },
+  archiveUrlInvalid: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlInvalid',
+    defaultMessage: 'Enter a valid HTTPS URL',
+  },
+  // #142 P3: an unreachable archive (no network / timeout / abort) is NOT a
+  // malformed URL; it gets its own message and a retry affordance.
+  archiveUrlUnreachable: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlUnreachable',
+    defaultMessage:
+      'Could not reach the remote archive. Check the connection and try again.',
+  },
+  archiveUrlRetry: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlRetry',
+    defaultMessage: 'Try again',
+  },
+  // #142: live validation feedback. The user must see the check reach the
+  // server BEFORE the create button unlocks.
+  archiveUrlChecking: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlChecking',
+    defaultMessage: 'Checking remote archive…',
+  },
+  archiveUrlValid: {
+    id: '$1screens.Onboarding.CreateOrganization.archiveUrlValid',
+    defaultMessage: 'Remote archive found',
   },
   creating: {
     id: '$1screens.Onboarding.CreateOrganization.creating',
-    defaultMessage: 'Creating Organization…',
+    defaultMessage: 'Creating Territory…',
   },
   // ⚑ SPEC (A4): there is no canonical copy for the materializer's typed
   // refusal (SPEC B §5.5 guard) — this minimal factual descriptor fills
   // the gap. COPY PENDING A SPEC DECISION.
   creationInProgress: {
     id: '$1screens.Onboarding.CreateOrganization.creationInProgress',
-    defaultMessage: 'An Organization creation is already in progress.',
+    defaultMessage: 'A Territory creation is already in progress.',
   },
   // ⚑ SPEC (A4): there is no canonical string yet for a package failure
   // BEFORE any write — `$1screens.OrganizationSetup.failureBody`
@@ -97,9 +131,31 @@ const m = defineMessages({
   // message is preserved as-is until a marker v2 lands.
   tooLong: {
     id: '$1screens.Onboarding.CreateOrganization.tooLong',
-    defaultMessage: 'Organization name is too long',
+    defaultMessage: 'Territory name is too long',
+  },
+  // #142: the create button used to disable with no visible reason. One
+  // hint explains it, priority: missing territory > pending validation >
+  // name too long.
+  missingTerritory: {
+    id: '$1screens.Onboarding.CreateOrganization.missingTerritory',
+    defaultMessage: 'Select the territory above to continue',
+  },
+  // #171: the remote archive is mandatory since the 2026-11-10 product
+  // decision, so a blank field needs its own visible reason too.
+  missingArchiveUrl: {
+    id: '$1screens.Onboarding.CreateOrganization.missingArchiveUrl',
+    defaultMessage: 'Enter the remote archive URL to continue',
+  },
+  waitingValidation: {
+    id: '$1screens.Onboarding.CreateOrganization.waitingValidation',
+    defaultMessage: 'Waiting for remote archive validation',
   },
 });
+
+// #129: the catalog is fixed at module load. #142: with a single entry the
+// selection is initialized to it — the screen never shows a selector whose
+// only option is already the answer, with no hint that it must be picked.
+const TERRITORY_OPTIONS = territoriesData.territories;
 
 // SPEC 4.1/E3: the name's real bound is the minted marker's, not the
 // input's — `coiab-org:v1:<16-hex>:<slot>:<encoded-name>` must fit 60 chars,
@@ -131,7 +187,18 @@ export const CreateOrganization = ({
   // SPEC B §3.1/D13: the journey is ONE screen with two local stages —
   // the intro (B :54) and the name form (B :55) — never routes.
   const [etapa, setEtapa] = React.useState<'introducao' | 'nome'>('introducao');
-  const [name, setName] = React.useState('');
+  // #129/#171: the name is picked from the predefined territory catalog —
+  // never typed — and the remote archive URL is required to create, even
+  // offline (the URL must be live-validated before the button unlocks).
+  // #142: a single-option catalog starts SELECTED (lazy initializer, so a
+  // re-render can never overwrite the user's own choice). With 2+ options
+  // the selection still starts empty and must be made on the screen.
+  const [selectedTerritoryId, setSelectedTerritoryId] = React.useState<
+    string | null
+  >(() =>
+    TERRITORY_OPTIONS.length === 1 ? (TERRITORY_OPTIONS[0]?.id ?? null) : null,
+  );
+  const [archiveUrl, setArchiveUrl] = React.useState('');
   const {formatMessage: t} = useIntl();
   // The root-owned materialization engine (SPEC B §5.4): the screen only
   // starts it and hands the journey over to the document — the promise
@@ -139,6 +206,11 @@ export const CreateOrganization = ({
   const {instance} = useCoiabOrganizationsStoreContext();
   const estado = useCoiabOrganizationsState();
   const materializador = useOrganizationMaterializer();
+  // P1-1: creation belongs to coordinators. A participant reaching this route
+  // (drawer, provisioning, direct navigation) is sent to the waiting screen.
+  const {coordinationRole} = useUserProfileState();
+  // One-shot guard: the redirect must land once even if the effect re-runs.
+  const redirecionouParticipanteRef = React.useRef(false);
   // SPEC B §3.3 items 2-3 and §5.5: a document with a creation in flight
   // (or a pending confirmation) outranks the form — the provisioning
   // surface owns its recovery and its confirmation — and a settled
@@ -160,7 +232,6 @@ export const CreateOrganization = ({
   // navigation state no longer contains (the mount crash this screen had).
   const [startResolvido, setStartResolvido] = React.useState(false);
   const [erro, setErro] = React.useState<Error | null>(null);
-  const [emptyNameError, setEmptyNameError] = React.useState(false);
   // A synchronous re-entry guard: a state check alone would let a second
   // press slip through before the rerender publishes the loading UI.
   const iniciandoRef = React.useRef(false);
@@ -168,6 +239,15 @@ export const CreateOrganization = ({
   // The layer's typed refusal (SPEC B §5.5) surfaces as a blocked state:
   // the form stays, explains, and re-arms — never crash, never silence.
   const [bloqueado, setBloqueado] = React.useState(false);
+
+  // P1-1: participants never see the form. The replace is guarded so a
+  // re-render (or a redirect loop) cannot dispatch it twice.
+  React.useEffect(() => {
+    if (coordinationRole !== 'participant') return;
+    if (redirecionouParticipanteRef.current) return;
+    redirecionouParticipanteRef.current = true;
+    navigation.replace('JoinOrganizationIntro');
+  }, [coordinationRole, navigation]);
 
   // SPEC B §3.2:64/:68 (Fase 5, fix round 3): while a start is in flight,
   // Back cannot remove this screen — the one state §3.2 names ("durante
@@ -249,11 +329,84 @@ export const CreateOrganization = ({
   // and navigation is the external system.
   React.useEffect(() => {
     if (!deveTrocar) return;
+    // P1-1: a participant's destination is the waiting screen, never the
+    // provisioning surface.
+    if (coordinationRole === 'participant') return;
     navigation.replace('OrganizationProvisioning');
-  }, [deveTrocar, navigation]);
+  }, [deveTrocar, coordinationRole, navigation]);
 
-  const trimmedName = name.trim();
-  const tooLong = isNameTooLong(name);
+  const territoryOptions = TERRITORY_OPTIONS;
+  const selectedTerritory = territoryOptions.find(
+    territory => territory.id === selectedTerritoryId,
+  );
+  const trimmedName = selectedTerritory?.name.trim() ?? '';
+  const tooLong = trimmedName.length > 0 && isNameTooLong(trimmedName);
+  // #142/#171: the archive URL is validated LIVE against the server, not just
+  // for format. The hook debounces the typing, calls `/info`, and reports an
+  // explicit positive (`valido`) state — the only state that unlocks create.
+  // The remote archive is MANDATORY (product decision 2026-11-10, #129/#171),
+  // even offline: a blank field neither calls the server nor unlocks creation,
+  // and a typed URL only counts after the live validation succeeds.
+  const validacaoArquivo = useValidarArquivoRemoto(archiveUrl);
+  const arquivoVazio = archiveUrl.trim().length === 0;
+  const archiveUrlInvalid =
+    validacaoArquivo.estado === 'invalido' ||
+    validacaoArquivo.estado === 'formato-invalido';
+  // #142 P3: a network failure is not a format error. Keep it separate so the
+  // user sees a connectivity message with a retry, never "invalid HTTPS URL".
+  const archiveUrlUnreachable = validacaoArquivo.estado === 'indisponivel';
+  // The normalized URL handed to the materializer comes from the validated
+  // result so the created journal carries exactly what was reached.
+  const normalizedArchiveUrl =
+    validacaoArquivo.estado === 'valido'
+      ? (validacaoArquivo.urlNormalizada ?? null)
+      : null;
+  // #172: a successful validation is a snapshot, not a live guarantee. The
+  // hook keeps `valido` (returning online re-enables), but creation itself
+  // must be refused while the device is known to be offline. `null` (unknown)
+  // is not treated as offline — only an explicit `false` blocks.
+  // Rodada 2 (co-revisor): `isConnected: true` with `isInternetReachable:
+  // false` is a Wi-Fi association with no route to the internet; the first
+  // fix missed it. Both fields only block on an explicit `false`.
+  const {isConnected, isInternetReachable} = useNetInfo();
+  const semConectividade =
+    isConnected === false || isInternetReachable === false;
+  const canCreate =
+    !!selectedTerritory &&
+    !tooLong &&
+    normalizedArchiveUrl !== null &&
+    !semConectividade;
+
+  // #142/#171: one hint explains a disabled create button, in priority order.
+  // The territory hint is what the release build was missing: the catalog has
+  // a single entry, the selector does not advertise itself, and the button
+  // stayed grey with no reason on screen. #171 adds the blank-archive hint:
+  // once the territory and name are settled, the required archive field is the
+  // remaining reason the button is still disabled.
+  // #172: connectivity outranks the per-field hints — a blank field offline is
+  // not "enter the URL", it is "there is no network to check it". When the
+  // hook already reports `indisponivel`, its own block above shows the same
+  // message (with a retry) and this hint would duplicate the testID.
+  const creationHint = !selectedTerritory
+    ? {testID: 'ORG.create-missing-territory', text: t(m.missingTerritory)}
+    : semConectividade && !archiveUrlUnreachable
+      ? {
+          testID: 'ORG.create-archive-url-unreachable',
+          text: t(m.archiveUrlUnreachable),
+        }
+      : validacaoArquivo.estado === 'verificando'
+        ? {
+            testID: 'ORG.create-waiting-validation',
+            text: t(m.waitingValidation),
+          }
+        : tooLong
+          ? {testID: 'ORG.create-name-too-long', text: t(m.tooLong)}
+          : arquivoVazio
+            ? {
+                testID: 'ORG.create-missing-archive-url',
+                text: t(m.missingArchiveUrl),
+              }
+            : null;
 
   // SPEC B :54/:55: Back from the name stage returns to the intro and
   // creates nothing; from the intro, Back pops to the choice (Success).
@@ -270,10 +423,20 @@ export const CreateOrganization = ({
     return unsubscribe;
   }, [etapa, navigation]);
 
-  function handleNameChange(value: string) {
-    setName(value);
-    setEmptyNameError(false);
-  }
+  // Cold start: this route may be the initial one, so the hardware Back has
+  // no history to pop and would exit the app. The intro stage is the choice
+  // fork's child, so Back there still belongs to the role question. With
+  // history the navigator's own handler owns the pop (this listener is not
+  // registered), and during a live operation the hold below wins.
+  React.useEffect(() => {
+    if (etapa !== 'introducao' || iniciando) return;
+    if (navigation.canGoBack()) return;
+    const hardware = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.replace('Success');
+      return true;
+    });
+    return () => hardware.remove();
+  }, [etapa, iniciando, navigation]);
 
   // A rejection means NOTHING was persisted (the materializer routes every
   // mid-materialization failure into the document as `falha_recuperavel`
@@ -293,14 +456,15 @@ export const CreateOrganization = ({
     if (iniciandoRef.current || deveTrocar) {
       return;
     }
-    if (trimmedName.length === 0) {
-      // SPEC B :252: an empty (or whitespace-only) name is rejected BEFORE
-      // persisting the intent — the message explains; the core is never
-      // called. (B :253's over-long bound keeps the button disabled.)
-      setEmptyNameError(true);
+    if (!selectedTerritory || tooLong || !normalizedArchiveUrl) {
+      // The button is disabled in these states; the guard keeps a stale
+      // press from calling the core anyway. #171: the remote archive is
+      // mandatory, so an empty or not-yet-validated URL always blocks.
       return;
     }
-    if (tooLong) {
+    if (semConectividade) {
+      // #172: a press queued before the connectivity loss re-rendered must
+      // not start a creation the device cannot complete online.
       return;
     }
     if (!materializador) {
@@ -317,7 +481,7 @@ export const CreateOrganization = ({
     setBloqueado(false);
     setIniciando(true);
     materializador
-      .iniciar(trimmedName)
+      .iniciar(trimmedName, {arquivoRemotoUrl: normalizedArchiveUrl})
       .then(() => {
         // BLOCKER 2: a resolved start means the operation is alive and the
         // provisioning surface owns it (it renders `preparando`/
@@ -351,7 +515,10 @@ export const CreateOrganization = ({
         // exists") is what makes a document un-creatable-over. PRE-MERGE
         // 4: this is the SAME predicate as the error-sheet effect's gate
         // above — the twin gates must evolve together.
-        if (organizacaoEmPreparo(instance.getState())) {
+        const estadoAtual = instance.getState();
+        if (organizacaoEmPreparo(estadoAtual)) {
+          // The un-settled organization predates this attempt (another
+          // creation or pending work). Its surface owns the handover.
           return;
         }
         const falha = toError(error);
@@ -373,6 +540,11 @@ export const CreateOrganization = ({
         iniciandoRef.current = false;
         setIniciando(false);
       });
+  }
+  // P1-1: the form is never rendered for a participant — the effect above
+  // replaces this route with the waiting screen.
+  if (coordinationRole === 'participant') {
+    return null;
   }
   if (etapa === 'introducao') {
     return (
@@ -418,35 +590,102 @@ export const CreateOrganization = ({
             <BodyText style={styles.body}>{t(m.nameGuidance)}</BodyText>
             <BodyText style={styles.body}>{t(m.nameNotIdentity)}</BodyText>
             <View style={styles.nameForm}>
+              <BodyText variant="smallMeta">{t(m.nameLabel)}</BodyText>
+              {/* #129: closed selector over the predefined territory list —
+                  the name is never free text. */}
+              <View testID="ORG.create-name-select" style={styles.nameSelect}>
+                {territoryOptions.map(territory => {
+                  const selected = territory.id === selectedTerritoryId;
+                  return (
+                    <Pressable
+                      key={territory.id}
+                      testID={`ORG.create-name-option-${territory.id}`}
+                      accessibilityRole="button"
+                      accessibilityState={{selected}}
+                      style={[
+                        styles.nameOption,
+                        selected && styles.nameOptionSelected,
+                      ]}
+                      onPress={() => setSelectedTerritoryId(territory.id)}>
+                      <BodyText>{territory.name}</BodyText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <BodyText variant="smallMeta">{t(m.archiveUrlLabel)}</BodyText>
               <TextInput
-                testID="ORG.create-name-inp"
+                testID="ORG.create-archive-url-inp"
                 style={styles.textInput}
-                value={name}
-                onChangeText={handleNameChange}
-                maxLength={MARKER_MAX_LENGTH}
+                value={archiveUrl}
+                onChangeText={setArchiveUrl}
                 placeholderTextColor={LIGHT_GREY}
-                placeholder={t(m.nameLabel)}
+                placeholder={t(m.archiveUrlPlaceholder)}
                 autoCapitalize="none"
+                keyboardType="url"
+                autoCorrect={false}
               />
-              {emptyNameError && (
-                <BodyText variant="smallMeta" testID="ORG.create-name-empty">
-                  {t(m.emptyName)}
+              {validacaoArquivo.estado === 'verificando' && (
+                <View
+                  testID="ORG.create-archive-url-checking"
+                  style={styles.archiveFeedback}>
+                  <LoadingIndicator size="small" style={{flex: 0}} />
+                  <BodyText variant="smallMeta">
+                    {t(m.archiveUrlChecking)}
+                  </BodyText>
+                </View>
+              )}
+              {validacaoArquivo.estado === 'valido' && (
+                <View
+                  testID="ORG.create-archive-url-valid"
+                  style={styles.archiveFeedback}>
+                  <MaterialIcons
+                    name="check-circle"
+                    size={16}
+                    color={DARK_GREEN}
+                  />
+                  <BodyText variant="smallMeta">
+                    {validacaoArquivo.nome ?? t(m.archiveUrlValid)}
+                  </BodyText>
+                </View>
+              )}
+              {archiveUrlInvalid && (
+                <BodyText
+                  variant="smallMeta"
+                  testID="ORG.create-archive-url-invalid">
+                  {t(m.archiveUrlInvalid)}
                 </BodyText>
               )}
-              {tooLong && (
-                <BodyText variant="smallMeta" testID="ORG.create-name-too-long">
-                  {t(m.tooLong)}
-                </BodyText>
+              {archiveUrlUnreachable && (
+                <View style={styles.archiveUnreachable}>
+                  <BodyText
+                    variant="smallMeta"
+                    testID="ORG.create-archive-url-unreachable">
+                    {t(m.archiveUrlUnreachable)}
+                  </BodyText>
+                  <Pressable
+                    testID="ORG.create-archive-url-retry"
+                    accessibilityRole="button"
+                    onPress={validacaoArquivo.tentarNovamente}>
+                    <BodyText variant="smallMeta" style={{color: COMAPEO_BLUE}}>
+                      {t(m.archiveUrlRetry)}
+                    </BodyText>
+                  </Pressable>
+                </View>
               )}
-              <BodyText variant="smallMeta" style={styles.counterText}>
-                {`${encodedNameLength(name)}/${MAX_ENCODED_NAME_LENGTH}`}
-              </BodyText>
             </View>
           </View>
           <View style={styles.buttonContainer}>
             {bloqueado && (
               <BodyText variant="smallMeta" testID="ORG.create-blocked">
                 {t(m.creationInProgress)}
+              </BodyText>
+            )}
+            {!iniciando && creationHint && (
+              <BodyText
+                variant="smallMeta"
+                testID={creationHint.testID}
+                style={styles.creationHint}>
+                {creationHint.text}
               </BodyText>
             )}
             {iniciando ? (
@@ -459,7 +698,7 @@ export const CreateOrganization = ({
                 testID="ORG.create-btn"
                 fullSize
                 text={t(m.createOrganization)}
-                disabled={tooLong}
+                disabled={!canCreate}
                 onPress={handleCreatePress}
               />
             )}
@@ -493,6 +732,14 @@ const styles = StyleSheet.create({
     gap: 10,
     width: '100%',
   },
+  archiveFeedback: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  archiveUnreachable: {
+    gap: 4,
+  },
   textInput: {
     borderWidth: 1,
     borderColor: LIGHT_GREY,
@@ -501,11 +748,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingHorizontal: 16,
   },
-  counterText: {
-    alignSelf: 'flex-end',
+  nameSelect: {
+    width: '100%',
+    gap: 8,
+  },
+  nameOption: {
+    borderWidth: 1,
+    borderColor: LIGHT_GREY,
+    borderRadius: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  nameOptionSelected: {
+    borderColor: COMAPEO_BLUE,
+    borderWidth: 2,
   },
   buttonContainer: {
     paddingVertical: 20,
     alignItems: 'center',
+  },
+  creationHint: {
+    marginBottom: 8,
+    textAlign: 'center',
   },
 });

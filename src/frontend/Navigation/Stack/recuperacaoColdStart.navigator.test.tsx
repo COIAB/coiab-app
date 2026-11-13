@@ -328,7 +328,16 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
   const B_ID = 'fedcba9876543210';
   const B_NOME = 'Organização B';
   const C_ID = 'cdef0123456789ab';
-  const C_NOME = 'Organização C';
+  // #129: the name now comes from the predefined territory selector.
+  const C_NOME = 'Kaxuyana-Tunayana';
+
+  // #171: the remote archive is required, so the create flows below must type
+  // a valid URL and wait for the live `/info` validation. The integration
+  // test drives the REAL hook, so a `fetch` mock answers the probe with 200
+  // and fails every other archive request (Core's `PUT /projects` has no
+  // timeout of its own, so a real network attempt can hang the drain). Other
+  // hosts (e.g. the local fastify server) still use the real fetch.
+  let fetchOriginal: typeof global.fetch;
 
   beforeEach(() => {
     // The teardown of a FAILED test cannot be awaited by the next one; the
@@ -342,10 +351,31 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     mockEarlyAccess = true;
     mockBarreiraPrepare = undefined;
     mockFalharVerify = false;
+    fetchOriginal = global.fetch;
+    global.fetch = jest.fn((input: unknown, init?: unknown) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/info')) {
+        return Promise.resolve({
+          status: 200,
+          json: async () => ({data: {name: 'Arquivo Remoto'}}),
+        } as Response);
+      }
+      if (url.includes('exemplo.org')) {
+        return Promise.resolve({
+          status: 503,
+          json: async () => ({error: 'unavailable'}),
+        } as Response);
+      }
+      return (fetchOriginal as (i: unknown, n?: unknown) => Promise<Response>)(
+        input,
+        init,
+      );
+    }) as unknown as typeof global.fetch;
   });
   afterEach(() => {
     MMKVStoreInitializer.removeItem(COIAB_ORGANIZATIONS_STORAGE_KEY);
     MMKVStoreInitializer.removeItem('MapeoTrack');
+    global.fetch = fetchOriginal;
   });
 
   async function bloquearPapel(projectId: string) {
@@ -395,7 +425,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
 
   async function abrirRecoveryAteOTitulo() {
     expect(
-      await screen.findByText('Could not open your organization', undefined, {
+      await screen.findByText('Could not open your territory', undefined, {
         timeout: 30_000,
       }),
     ).toBeOnTheScreen();
@@ -461,7 +491,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     // The introduction itself is up: its §B :54 title (the provisioning's
     // own exit button below the modal carries the same words, aria-hidden).
     expect(
-      await screen.findByText('Create Organization', {}, {timeout: 15_000}),
+      await screen.findByText('Create Territory', {}, {timeout: 15_000}),
     ).toBeOnTheScreen();
     expect(
       await screen.findByTestId(
@@ -523,9 +553,16 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
         },
       ),
     );
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      C_NOME,
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #171: the remote archive is required (even offline) — the field must be
+    // filled and live-validated before create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
 
@@ -533,7 +570,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     // preparation (the handover replace leaves provisioning twice on the
     // stack — R1's shape), then its confirmation.
     expect(
-      await screen.findAllByText('Organization created', {}, {timeout: 30_000}),
+      await screen.findAllByText('Territory created', {}, {timeout: 30_000}),
     ).not.toHaveLength(0);
     await fireEvent.press(
       (
@@ -857,7 +894,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
       documentoPersistido().organizacoes.find(org => org.id === B_ID)?.estado,
     ).toBe('preparando');
     expect(
-      screen.queryByText('Could not open your organization'),
+      screen.queryByText('Could not open your territory'),
     ).not.toBeOnTheScreen();
     expect(
       screen.queryByTestId('ORG.provisioning-unavailable-name'),
@@ -887,7 +924,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
       {timeout: 60_000},
     );
     expect(
-      await screen.findAllByText('Organization created', {}, {timeout: 30_000}),
+      await screen.findAllByText('Territory created', {}, {timeout: 30_000}),
     ).not.toHaveLength(0);
     expect(
       screen.queryByTestId('ORG.provisioning-switch-organization-btn'),
@@ -960,7 +997,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     // string; the engine keeps recovery with the refusal code.
     expect(
       await screen.findByText(
-        'Finish or discard the record before switching organization',
+        'Finish or discard the record before switching territory',
         undefined,
         {timeout: 15_000},
       ),
@@ -1024,7 +1061,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     );
     expect(
       await screen.findByText(
-        'Could not open your organization',
+        'Could not open your territory',
         {includeHiddenElements: true},
         {timeout: 30_000},
       ),
@@ -1130,13 +1167,20 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
         },
       ),
     );
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      C_NOME,
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #171: the remote archive is required (even offline) — the field must be
+    // filled and live-validated before create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
     expect(
-      await screen.findAllByText('Organization created', {}, {timeout: 30_000}),
+      await screen.findAllByText('Territory created', {}, {timeout: 30_000}),
     ).not.toHaveLength(0);
     await fireEvent.press(
       (
@@ -1227,9 +1271,16 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
         },
       ),
     );
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      C_NOME,
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #171: the remote archive is required (even offline) — the field must be
+    // filled and live-validated before create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
 
@@ -1320,7 +1371,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
     // first render already — this is materializar.ts's settled state, not
     // something the new button creates.
     expect(
-      await screen.findByText('Organization created', undefined, {
+      await screen.findByText('Territory created', undefined, {
         timeout: 30_000,
       }),
     ).toBeOnTheScreen();
@@ -1346,7 +1397,7 @@ describe('#89 fase 2 — saída navegável da recovery de cold start (navigator 
       generation: 0,
     });
     expect(
-      await screen.findByText('Organization created', undefined, {
+      await screen.findByText('Territory created', undefined, {
         timeout: 30_000,
       }),
     ).toBeOnTheScreen();

@@ -27,6 +27,7 @@ import {
   useDraftObservationActions,
   useDraftObservationState,
 } from '../../src/frontend/contexts/DraftObservationContext';
+import type {CoordinationRole} from '../../src/frontend/contexts/UserProfileStoreContext';
 import {expoToCoreDeviceType} from '../../src/frontend/lib/deviceTypeMap';
 import {
   criarEstadoInicialOrganizacoes,
@@ -86,6 +87,11 @@ export type FlowStateSpec = {
    * leaves the app's persisted flag in charge.
    */
   earlyAccess?: boolean;
+  /**
+   * Coordination role the story's profile should carry. The story decorator
+   * seeds it into its scoped profile store; unset keeps the role null.
+   */
+  coordinationRole?: CoordinationRole;
   draftObservation?: DraftObservationSpec;
 };
 
@@ -103,6 +109,8 @@ export type ResolvedFlowState = {
   presetFieldIds?: readonly string[];
   /** `earlyAccess` as requested, for the decorators to provide story-scoped. */
   earlyAccess?: boolean;
+  /** Coordination role as requested, seeded into the story's profile store. */
+  coordinationRole?: CoordinationRole;
 };
 
 /**
@@ -111,8 +119,8 @@ export type ResolvedFlowState = {
  * name, so the selector only lists B first if it really leads with the active
  * organization (SPEC A §6.1).
  */
-const ORGANIZATION_A = {id: 'aaaaaaaaaaaaaaaa', name: 'Test Organization A'};
-const ORGANIZATION_B = {id: 'bbbbbbbbbbbbbbbb', name: 'Test Organization B'};
+const ORGANIZATION_A = {id: 'aaaaaaaaaaaaaaaa', name: 'Test Territory A'};
+const ORGANIZATION_B = {id: 'bbbbbbbbbbbbbbbb', name: 'Test Territory B'};
 const PERSISTED_ORGANIZATION_ID = '0123456789abcdef';
 
 export const FLOW_STATES = {
@@ -135,20 +143,20 @@ export const FLOW_STATES = {
     auth: 'authenticated',
     deviceName: 'Test Device',
     project: 'none',
-    organization: {name: 'Test Organization', observations: 5},
+    organization: {name: 'Test Territory', observations: 5},
   },
   namedWithOrganization: {
     auth: 'authenticated',
     deviceName: 'Test Device',
     project: 'none',
-    organization: {name: 'Test Organization'},
+    organization: {name: 'Test Territory'},
     draftObservation: 'none',
   },
   orgProvisioning: {
     auth: 'authenticated',
     deviceName: 'Test Device',
     project: 'none',
-    organization: {name: 'Test Organization', slots: 'monitoramento'},
+    organization: {name: 'Test Territory', slots: 'monitoramento'},
   },
   /**
    * Two ready organizations with early access off (the production default):
@@ -215,7 +223,7 @@ export const FLOW_STATES = {
    * names a project the backend never had. OrganizationProvisioning shows
    * the recovery surface with A's name. Early access off — production's
    * default — yet the creation exit is still offered: neither drawer nor
-   * recovery gates it since f12641db.
+   * recovery gates it since #121.
    */
   oneOrganizationUnavailable: {
     auth: 'authenticated',
@@ -263,6 +271,36 @@ export const FLOW_STATES = {
     earlyAccess: true,
     draftObservation: 'none',
   },
+  /** One ready organization opened on Alertas rather than Monitoramento. */
+  homeWithOrganizationAlertas: {
+    auth: 'authenticated',
+    deviceName: 'Test Device',
+    project: 'none',
+    organizations: {
+      list: [ORGANIZATION_A],
+      activeId: ORGANIZATION_A.id,
+      activeArea: 'alertas',
+    },
+    earlyAccess: false,
+    draftObservation: 'none',
+  },
+  /** One ready organization whose name is too long for the header row. */
+  homeWithLongTerritoryName: {
+    auth: 'authenticated',
+    deviceName: 'Test Device',
+    project: 'none',
+    organizations: {
+      list: [
+        {
+          id: 'dddddddddddddddd',
+          name: 'Test Territory With A Very Long Official Name',
+        },
+      ],
+      activeId: 'dddddddddddddddd',
+    },
+    earlyAccess: false,
+    draftObservation: 'none',
+  },
 } satisfies Record<string, FlowStateSpec>;
 
 // 5 digits, not the reserved obscure code — see PasscodeInputSchema in
@@ -295,6 +333,9 @@ function buildKey(spec?: FlowStateSpec) {
       : null,
     ...(spec.organizations ? {organizations: spec.organizations} : {}),
     ...(spec.earlyAccess === undefined ? {} : {earlyAccess: spec.earlyAccess}),
+    ...(spec.coordinationRole === undefined
+      ? {}
+      : {coordinationRole: spec.coordinationRole}),
     draftObservation: spec.draftObservation ?? null,
   });
 }
@@ -664,7 +705,10 @@ export function useFlowState(spec?: FlowStateSpec): ResolvedFlowState | null {
             }
             const activated = await activateOrganization(
               persistedOrganizationSeed.activeId,
-              {area: 'monitoramento'},
+              {
+                area:
+                  persistedOrganizationSeed.activeArea ?? 'monitoramento',
+              },
             );
             if (cancelled) return;
             if (!activated) {
@@ -757,6 +801,7 @@ export function useFlowState(spec?: FlowStateSpec): ResolvedFlowState | null {
         observationIds,
         presetFieldIds,
         earlyAccess: spec_.earlyAccess,
+        coordinationRole: spec_.coordinationRole,
       });
     }
 

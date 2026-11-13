@@ -37,6 +37,62 @@ Never write to `digidem/*`.
    `workflow_dispatch`; do not claim it can be force-started. Verify required
    `all` and `frontend` checks and post-merge CI separately.
 
+## PR-cycle lessons
+
+- **Recount review threads after every push, once the automated review of the
+  new head has finished.** Automated reviewers re-review each new head; a
+  clean thread list earlier in the PR says nothing about the current one.
+  Confirm the reviewer has posted its review for the exact head SHA — wait one
+  bounded window (a CI run is enough) — before counting. If the bot publishes
+  nothing for that SHA (paused, rate-limited, `Review skipped`), record that in
+  the PR, keep reviewing and resolving the threads that do exist, and rely on
+  the independent review; an absent automated review is not evidence of a clean
+  head. One cycle went from "all resolved" to three fresh P1s on the new
+  head. Fix or rebut with evidence (`file:line`, test, SHA), then resolve.
+- **A green rerun of the same SHA does not prove a flake.** An intermittent
+  regression also passes. Compare against what CI actually tested: `ci.yml`
+  checks out `refs/pull/N/merge` — the head merged into the base branch as it
+  stood when the triggering event fired (a rerun reuses that merge) — so
+  reproduce on that merge commit and on its base side (`Merge <head> into
+  <base>` in the checkout log), fetching the SHAs from the log rather than a
+  fresh `refs/pull/N/merge`, which GitHub recomputes when the base moves. A local
+  run of the head alone, or of the merge base, covers neither when the base
+  moved, because the failure can come from the PR, from new base commits, or
+  from their interaction. Two flake suspects seen in one cycle: the IPC drain
+  timing out in a slow navigator suite, and unrelated screen suites failing
+  only in CI. File the suspicion with the observed message and a hypothesis,
+  never as "flake" alone.
+- **A disabled primary button must name what is missing.** When `canCreate`
+  ANDs several conditions, render the unmet one next to the button, in a
+  fixed priority order, and test each state. A green validation check with a
+  grey button reads as a bug to the user even when the gate is correct.
+- **A single-option catalog must not ask for a choice.** Pre-select when the
+  list has exactly one entry and keep `null` for 2+; a forced tap on the only
+  option adds friction and hides why the action stays disabled.
+- **A press on a disabled button never reaches the handler.** `fireEvent.press`
+  on a `disabled` element is a no-op in RNTL, so a test built that way proves
+  the prop and leaves the in-handler guard uncovered. Change the blocking
+  condition (connectivity, permission), await the re-render, then read and
+  invoke the current node's handler. For `PrimaryButton`, use `props.onPress` or
+  the pressability-config handler as in `CreateOrganization.test.tsx`; holding
+  the node captured before the re-render keeps a stale closure with the old
+  condition. Assert that the side effect did not run. Two independent reviewers
+  caught this gap on #172.
+- **Link connectivity is not internet connectivity.** `useNetInfo().isConnected`
+  stays true on a Wi-Fi association with no route out. Gate on
+  `isConnected === false || isInternetReachable === false`, and keep
+  `null`/unknown non-blocking: blocking on an unresolved probe invents an
+  outage. The same PR needed this twice — the first guard checked link state
+  only.
+- **An approval is bound to the SHA, not to the change.** A prettier-only
+  commit still invalidates both verdicts; re-run a focused review of the delta
+  and say explicitly that no semantic token moved. Minutes versus merging a
+  head nobody reviewed.
+- **Never hide exit codes behind `| head`, `| grep` or `| tail`.** Reviewer
+  sandboxes are read-only and often cannot bind a port (`listen EPERM`), so
+  navigator suites must run on the host; a filtered pipeline can print a clean
+  line while the command failed.
+
 ## Historical cloud-app lessons
 
 The following findings came from `digidem/comapeo-cloud-app`; identifiers are
@@ -91,6 +147,11 @@ sleeping once and trusting stale results. The historical cloud-app tally was
 15 passed, 6 skipped, 0 failed; do not use that fixed count for COIAB. Check
 required names, conclusions and SHA, not just the absence of failures.
 
+- **`eslint` clean does not make CI green.** The `all` job also runs
+  `npm run lint:prettier`, which covers `src/**/*.{js,ts,jsx,tsx}` and fails
+  before the tests on one unformatted file. Run it before pushing; #172 spent a
+  full CI round on this after a clean local lint.
+
 ## Flake repro loops
 
 - A single jest run can PASS yet hang after the suite ("Jest did not exit")
@@ -118,7 +179,19 @@ required names, conclusions and SHA, not just the absence of failures.
   which trades a timeout flake for an unhandled rejection. Measure before
   choosing — two ~70s teardowns are proof the delay is real; six fast runs are
   not.
-- A flake that never reproduces locally does not clear the suspect: read the
+- **`process._getActiveHandles()` does not list JS timers.** A `setInterval`
+  that runs no I/O is invisible there, so "only stdio pipes" is not proof the
+  process is clean. Find it with `async_hooks` (`init` on `Timeout`, capture
+  `new Error().stack` only when `_repeat` is true) or
+  `process.getActiveResourcesInfo()`, then verify 10/10 runs exit without the
+  warning. Real case (#105): `@sentry/react-native` 8.15.1 starts a 5 s
+  `AsyncExpiringMap` cleanup interval at **import**, before `Sentry.init()`;
+  short suites finish first and the timer keeps Node alive — intermittent
+  because a cold import outlives the first tick. Do not `unref` or
+  `--forceExit`; cancel exactly that interval in a Jest
+  `testEnvironment`/`globalTeardown` and keep a cheap import fixture so the
+  coupling to the dependency's internal filename is tested.
+- **A flake that never reproduces locally does not clear the suspect:** read the
   failure path in the dependency source (`rpc-reflector` `handleClose` rejects
   all in-flight calls with `ChannelClosedError` at close; `@comapeo/ipc`
   documents in-flight rejections as by-design). If teardown closes the channel
@@ -128,38 +201,95 @@ required names, conclusions and SHA, not just the absence of failures.
 ## Harness and environment pitfalls
 
 - **Never undo a mutation test with `git checkout -- <file>`.** That restores
-the HEAD version and silently discards uncommitted delegated work — in the
-#136 round it wiped an entire rewritten component and produced five
-unexplained test failures. Copy the file to a path outside the worktree
-(`cp x.tsx /root/backup-x.tsx`), mutate, run, then copy back, and check
-`git diff --stat` afterwards.
+  the HEAD version and silently discards uncommitted delegated work — in the
+  #136 round it wiped an entire rewritten component and produced five
+  unexplained test failures. Copy the file to a unique path outside the
+  worktree (`cp x.tsx "${TMPDIR:-$HOME/dev}/backup-x.$$.tsx"`), mutate, run,
+  then copy back from that same path and check `git diff --stat` afterwards.
+  The `$$` stops concurrent worktrees from overwriting each other's backup; if
+  the session dies before the copy-back, restore from that path before any
+  other run or commit.
 - **`@testing-library/react-native` v14 `render` is async.** Always
-`await render(...)`. Un-awaited renders make Suspense/pending assertions
-flaky: the suite passes in isolation and fails when run with siblings.
-- **`check:message-catalog` only requires a clean `messages/`.** It runs
-`git status --porcelain -- messages/`, so any staged, unstaged or untracked
-change under `messages/` fails even when the generator output is correct —
-commit or revert it first. Changes elsewhere in the tree do not affect it.
+  `await render(...)`. Un-awaited renders make Suspense/pending assertions
+  flaky: the suite passes in isolation and fails when run with siblings.
+- **`findBy*` defaults to a 1 s timeout — too short after a real navigator
+  mount.** Suites that boot `setupIntegrationTest` + the real navigator fail
+  intermittently in CI with `Unable to find an element` for a
+  `tabBarButton<X>` testID, about 1 s after the assertion starts, and pass on
+  rerun. Sibling
+  tests already pass `{timeout: 15_000}` (`ObservationFields/index.test.tsx`);
+  match that instead of raising global `asyncUtilTimeout`. A timeout raise does
+  not weaken the assertion — the test still fails if the element never renders.
+- **CI reruns overwrite a failed attempt's conclusion and its logs.** After
+  `gh run rerun --failed`, `gh run view <run> --log-failed` comes back empty and
+  the job list shows success. The original output stays downloadable per
+  attempt: `gh api repos/<owner>/<repo>/actions/runs/<run>/attempts/<n>/logs`
+  (attempts are 1-based) — unzip it and grep the assertion. Capture that before
+  rerunning if the failure text matters for a bug report.
+- **Rerunning a flaky job is a diagnosis, not a fix.** Two occurrences of the
+  same assertion on `develop` (different SHAs) mean a real race, not
+  infrastructure noise — file the issue with the attempt-log evidence.
+- **Linked worktrees need the ignored runtime inputs.** `node_modules`,
+  `translations/` and `.env` are not in git; a fresh worktree fails every Jest
+  suite with `Cannot find module './translations/index' from jest.setup.js`.
+  Point all three at the main clone before running anything (symlink
+  `node_modules` and `.env`; `translations/` may also be generated with
+  `npm run build:translations`), and remember `git stash -u` in such a worktree
+  stashes those symlinks too — baseline runs then fail for the wrong reason.
+- **`/tmp` is a small tmpfs here (~1.9 GB) and Jest's transform cache grows
+  past 1 GB.** A 10-run loop ends in `ENOSPC: no space left on device` from
+  `jest-transform-cache`, which surfaces as "Test suite failed to run" with 0
+  tests — not as a test failure. `rm -rf /tmp/jest_*` or pass `--cacheDirectory`
+  on real disk before long repro loops; check `df -h /tmp` when a suite that
+  passed minutes ago stops even transforming.
+- **`check:message-catalog` regenerates the catalogs.** It runs the generator
+  and compares the committed `messages/` byte for byte, so it fails when
+  generation fails, when the generated output differs, or when an uncommitted
+  change sits under `messages/`. `messages/en-US/*.json` is generated — never
+  edit it by hand. The English text is the `defaultMessage` in the component's
+  `defineMessages`, so fix the component, run `npm run extract-messages`,
+  review and commit the expected change, then rerun the check. `pt-BR` is
+  hand-maintained and is not regenerated. Uncommitted files outside
+  `messages/` don't fail it by themselves.
+- **Storybook decorators compose with the FIRST entry innermost.** A decorator
+  that never renders `<Story/>` — `withRealNavigator` is one; it mounts
+  `NavigationContainer` and returns no `<Story/>` — swallows every decorator
+  listed **before** it, plus story-level ones; entries after it wrap it and
+  still render. To wrap the navigator (locale, providers), the wrapper goes
+  LAST: `decorators: [withRealNavigator, withPtBrLocale]`. A membership check
+  (`toContain`) passes with the wrong order, so assert the exact list with
+  `toEqual([...])`; the symptom of getting it wrong is a capture frame that
+  mixes pt-BR and en-US because the emulator's locale wins.
+- **BrowserStack e2e does not run on the normal PR CI.** The workflow triggers
+  on PRs to `release/**`, on the scheduled cron (Sun–Wed, on `develop`), and on
+  `workflow_dispatch` with a `branch` input. So changing user-facing English
+  copy can leave `tests/e2e/specs/**` asserting the old string with a green
+  PR: grep `tests/e2e` for the old text whenever a `defaultMessage` changes —
+  that check is mandatory. Dispatching the workflow on the PR branch is only a
+  fallback, and it needs the BrowserStack and Expo secrets; `rebrand-comapeo`
+  records that this fork has not run e2e successfully, so do not treat the
+  dispatch as a substitute for the grep.
 - **`/tmp` is a ~1.9 GB tmpfs on this box.** APKs (85-190 MB each), jest
-caches and onnxruntime temp dirs fill it and cause `No space left on device`
-mid-run. Keep artifacts and harness logs under `/root/dev/`; `df -h /tmp`
-reports the tmpfs, not the root disk.
+  caches and onnxruntime temp dirs fill it and cause `No space left on device`
+  mid-run. Keep artifacts, harness logs and mutation backups under a writable
+  directory with room — `/root/dev/` here, `$HOME/dev` elsewhere, never inside
+  the worktree; `df -h /tmp` reports the tmpfs, not the root disk.
 - **`gh api graphql` intermittently answers with HTML** (`502 Bad Gateway`,
-then `invalid character '<'`). Transient: sleep 5-20s and retry; it is not an
-auth or permission failure.
+  then `invalid character '<'`). Transient: sleep 5-20s and retry; it is not an
+  auth or permission failure.
 - **Resolve bot threads, do not just reply.** After fixing, call
-`addPullRequestReviewThreadReply` and then `resolveReviewThread`, and verify
-`unresolved == 0` via GraphQL. A reply alone leaves the PR blocked.
+  `addPullRequestReviewThreadReply` and then `resolveReviewThread`, and verify
+  `unresolved == 0` via GraphQL. A reply alone leaves the PR blocked.
 - **`develop` protection requires only `all` + `frontend`**, with no mandatory
-reviewer. `mergeStateStatus: CLEAN` with an empty `reviewDecision` is ready,
-not awaiting approval.
+  reviewer. `mergeStateStatus: CLEAN` with an empty `reviewDecision` is ready,
+  not awaiting approval.
 - **Verify post-merge CI on the merge commit itself.** A green PR proves the
-PR head; only the post-merge run proves the merge result. Doc-only PRs still
-run `all` and `frontend`.
+  PR head; only the post-merge run proves the merge result. Doc-only PRs still
+  run `all` and `frontend`.
 - **Verify every documented behavior claim against source.** In the #138 doc
-PR, four claims copied from an implementation summary were false: editing
-still normalizes tags, and the observer section depends on the author
-resolving, not on tags. Read the component before writing what it does.
+  PR, four claims copied from an implementation summary were false: editing
+  still normalizes tags, and the observer section depends on the author
+  resolving, not on tags. Read the component before writing what it does.
 
 ## Pitfalls
 

@@ -42,18 +42,6 @@ const m = defineMessages({
     description:
       'Página Entroncamento greeting (Figma Kutary App V2, 2668:4539)',
   },
-  switchOrganizationTitle: {
-    id: '$1Navigation.Menu.switchOrganizationTitle',
-    defaultMessage: 'Trocar de organização',
-    // SPEC A §6.1:201 — pt-BR ships the verbatim string; a nova página usa
-    // id próprio para não divergir da duplicata canônica do seletor.
-    description: 'Menu list entry that opens the organization selector',
-  },
-  switchOrganizationSubtitle: {
-    id: '$1Navigation.Menu.switchOrganizationSubtitle',
-    defaultMessage: 'Escolher outra org',
-    description: 'Subtitle of the organization selector menu entry',
-  },
   convidar: {
     id: '$1Navigation.Menu.convidar',
     defaultMessage: 'Convidar',
@@ -64,10 +52,15 @@ const m = defineMessages({
     defaultMessage: 'Adicionar pessoas',
     description: 'Subtitle of the invite menu entry',
   },
-  criarOrganizacao: {
-    id: '$1Navigation.Menu.criarOrganizacao',
-    defaultMessage: 'Criar organização',
-    description: 'Menu list entry that opens the organization creation flow',
+  mapaDeFundo: {
+    id: '$1Navigation.Menu.mapaDeFundo',
+    defaultMessage: 'Mapa de fundo',
+    description: 'Menu list entry that opens the background maps screen',
+  },
+  mapaDeFundoSubtitle: {
+    id: '$1Navigation.Menu.mapaDeFundoSubtitle',
+    defaultMessage: 'Mapas offline do território',
+    description: 'Subtitle of the background maps menu entry',
   },
   exchange: {
     id: '$1Navigation.Menu.exchange',
@@ -131,15 +124,16 @@ function MenuListItem({
  * "Olá, Parente" + nome do projeto corrente, os DOIS cards clicáveis de
  * área (Monitoramento Territorial e Alertas — Cadeias Produtivas e Censo
  * Demográfico ficam para fases seguintes, decisão do dono do produto) e a
- * lista: Trocar de organização (≥2 organizações), Convidar (somente
- * coordinator) e Criar organização (organização operável). Early access
- * não condiciona mais essas entradas. As 5 entradas legadas do CoMapeo
- * (Team, Coordinator Tools, Gather Observations, Background Map,
- * AppSettings) migraram: Background Maps/Project Settings/Your Team agora
- * vivem em AppSettings (ComapeoSettings). O botão Exchange permanece no
- * rodapé.
+ * lista: "Mapa de fundo" (todos os papéis, imediatamente acima de
+ * "Convidar") e Convidar (somente coordinator). A criação e a troca de
+ * território migraram para Configurações (AppSettings): a criação é visível
+ * apenas para coordenador e a troca somente com duas ou mais organizações.
+ * Early access não condiciona mais essas entradas. As 5 entradas legadas do
+ * CoMapeo (Team, Coordinator Tools, Gather Observations, Background Map,
+ * AppSettings) migraram: Project Settings/Your Team agora vivem em
+ * AppSettings (ComapeoSettings). O botão Exchange permanece no rodapé.
  */
-export function DrawerMenu({closeMenu}: {closeMenu: () => void}) {
+export function DrawerMenu() {
   const {formatMessage} = useIntl();
   const navigation = useNavigationFromRoot();
 
@@ -212,25 +206,17 @@ export function DrawerMenu({closeMenu}: {closeMenu: () => void}) {
           </BodyText>
         </View>
         {!semOrganizacaoOperavel && <OrganizationAreaAccesses />}
-        <View style={styles.listContainer}>
-          {/* Owner decision (f12641db, consistency fix): the selector
-              entry is part of the normal app and early access gates it no
-              longer. It exists whenever there are two or more
-              organizations; with fewer it does not exist (no hidden or
-              disabled control). */}
-          {estadoOrganizacoes.organizacoes.length >= 2 && (
-            <MenuListItem
-              testID="MENU.trocar-organizacao"
-              onPress={() => {
-                closeMenu();
-                navigation.navigate('Organizations');
-              }}
-              titulo={m.switchOrganizationTitle}
-              subtitulo={m.switchOrganizationSubtitle}
-              icone="swap-horiz"
-              accessibilityLabel="Open the organization selector."
-            />
-          )}
+        <View style={styles.listContainer} testID="MENU.lista">
+          {/* "Mapa de fundo" é visível para coordinator, participant e solo,
+              e fica imediatamente acima de "Convidar" na lista. */}
+          <MenuListItem
+            testID="MENU.mapa-de-fundo"
+            onPress={() => navigation.navigate('BackgroundMaps')}
+            titulo={m.mapaDeFundo}
+            subtitulo={m.mapaDeFundoSubtitle}
+            icone="layers"
+            accessibilityLabel={formatMessage(m.mapaDeFundo)}
+          />
           {/* O acesso à equipe fica COORD-only nesta página; participants
               seguem usando Your Team em AppSettings. */}
           {role === 'coordinator' && (
@@ -240,23 +226,7 @@ export function DrawerMenu({closeMenu}: {closeMenu: () => void}) {
               titulo={m.convidar}
               subtitulo={m.convidarSubtitle}
               icone="person-add"
-              accessibilityLabel="Invite people to the organization."
-            />
-          )}
-          {/* Same owner decision (f12641db): the create entry is part of
-              the normal app and early access gates it no longer. It exists
-              whenever there is an operating organization; without one it
-              does not exist (no hidden or disabled control). */}
-          {!semOrganizacaoOperavel && (
-            <MenuListItem
-              testID="MENU.criar-organizacao"
-              onPress={() => {
-                closeMenu();
-                navigation.navigate('CreateOrganization');
-              }}
-              titulo={m.criarOrganizacao}
-              icone="business"
-              accessibilityLabel="Open the organization creation flow."
+              accessibilityLabel="Invite people to the territory."
             />
           )}
         </View>

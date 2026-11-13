@@ -1,6 +1,7 @@
 import type {InitialState} from '@react-navigation/native';
 import type {Meta, StoryObj} from '@storybook/react-native';
 import {withRealNavigator} from '../../../.rnstorybook/decorators/withRealNavigator';
+import {withPtBrLocale} from '../../../.rnstorybook/decorators/withPtBrLocale';
 import {FLOW_STATES} from '../../../.rnstorybook/utils/flowState';
 
 /**
@@ -44,7 +45,7 @@ const NoStoryComponent = () => null;
 const meta = {
   title: 'Flows/OrgLayer',
   component: NoStoryComponent,
-  decorators: [withRealNavigator],
+  decorators: [withRealNavigator, withPtBrLocale],
 } satisfies Meta<typeof NoStoryComponent>;
 
 export default meta;
@@ -248,6 +249,28 @@ export const OrganizationUnavailableOrphanedSelection: Story = {
     flow: {
       state: FLOW_STATES.orphanedOrganizationSelection,
       initialState: provisioningState,
+    },
+  },
+};
+
+/** Home with a ready Organization opened on its Alertas area. */
+export const HomeWithOrganizationAlertas: Story = {
+  name: '13 Home With Organization (Alertas)',
+  parameters: {
+    flow: {
+      state: FLOW_STATES.homeWithOrganizationAlertas,
+      initialState: homeState,
+    },
+  },
+};
+
+/** Home whose active territory has an unusually long official name. */
+export const HomeWithLongTerritoryName: Story = {
+  name: '14 Home With Long Territory Name',
+  parameters: {
+    flow: {
+      state: FLOW_STATES.homeWithLongTerritoryName,
+      initialState: homeState,
     },
   },
 };

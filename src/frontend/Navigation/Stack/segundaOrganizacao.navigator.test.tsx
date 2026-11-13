@@ -180,6 +180,7 @@ import {
   setupIntegrationTest,
   semearDocumentoPronta,
 } from '../../../../tests/integration/helpers/setupIntegrationTest';
+import {COMPLETE_USER_PROFILE} from '../../../../tests/integration/helpers/react';
 
 /**
  * The RAW persisted document, exactly as the store writes it: `ativa` and
@@ -282,10 +283,19 @@ function documentoComSegunda(
 describe('segunda organização (navigator real)', () => {
   const orgSetup = setupIntegrationTest();
 
+  // #171: the remote archive is required, so the create flow below must type a
+  // valid URL and wait for the live `/info` validation. The integration test
+  // drives the REAL hook, so a `fetch` mock answers the probe with 200 and
+  // fails every other archive request (Core's `PUT /projects` has no timeout
+  // of its own, so a real network attempt can hang the drain). Other hosts
+  // (e.g. the local fastify server) still use the real fetch.
+  let fetchOriginal: typeof global.fetch;
+
   afterEach(() => {
     MMKVStoreInitializer.removeItem(COIAB_ORGANIZATIONS_STORAGE_KEY);
     // A trilha semeada por um teste bloquearia o boot dos seguintes (#88).
     MMKVStoreInitializer.removeItem('MapeoTrack');
+    global.fetch = fetchOriginal;
   });
 
   beforeEach(() => {
@@ -294,59 +304,84 @@ describe('segunda organização (navigator real)', () => {
     // index.navigator.test.tsx).
     MMKVStoreInitializer.removeItem(COIAB_ORGANIZATIONS_STORAGE_KEY);
     MMKVStoreInitializer.removeItem('MapeoTrack');
+    fetchOriginal = global.fetch;
+    global.fetch = jest.fn((input: unknown, init?: unknown) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/info')) {
+        return Promise.resolve({
+          status: 200,
+          json: async () => ({data: {name: 'Arquivo Remoto'}}),
+        } as Response);
+      }
+      if (url.includes('exemplo.org')) {
+        return Promise.resolve({
+          status: 503,
+          json: async () => ({error: 'unavailable'}),
+        } as Response);
+      }
+      return (fetchOriginal as (i: unknown, n?: unknown) => Promise<Response>)(
+        input,
+        init,
+      );
+    }) as unknown as typeof global.fetch;
   });
 
   const SEGUNDA_ID = 'fedcba9876543210';
-  const SEGUNDA_NOME = 'Organização B';
+  // #129: the name now comes from the predefined territory selector.
+  const SEGUNDA_NOME = 'Kaxuyana-Tunayana';
 
-  async function habilitarEarlyAccessEAbrirMenu() {
-    await act(async () => {
-      mockNavigation.navigate('EarlyAccess');
-    });
+  async function abrirCriarTerritorioEmConfiguracoes() {
     await fireEvent.press(
-      await screen.findByTestId('EA.checkbox-off', {}, {timeout: 15_000}),
+      await screen.findByTestId(
+        'tabBarButtonConfiguracoes',
+        {},
+        {timeout: 15_000},
+      ),
     );
-    await act(async () => {
-      mockNavigation.goBack();
-    });
     await fireEvent.press(
-      await screen.findByTestId('tabBarButtonMenu', {}, {timeout: 15_000}),
+      await screen.findByTestId(
+        'settingsCreateOrganizationButton',
+        {},
+        {timeout: 15_000},
+      ),
     );
   }
 
-  test('criar a segunda organização pela página de Menu preserva A e abre B pela confirmação (CA06)', async () => {
+  test('criar a segunda organização por Configurações preserva A e abre B pela confirmação (CA06)', async () => {
     semearDocumentoPronta(
       orgSetup.projectId,
       orgSetup.alertasProjectId,
       orgSetup.orgId,
       orgSetup.orgName,
     );
-    await orgSetup.renderNavigation();
+    await orgSetup.renderNavigation({
+      userProfile: {...COMPLETE_USER_PROFILE, coordinationRole: 'coordinator'},
+    });
     expect(
       // Home pós-login é o Entroncamento (tab bar 5 abas, #32).
       await screen.findByTestId('ENTRONCAMENTO.scrn', {}, {timeout: 15_000}),
     ).toBeOnTheScreen();
 
-    // Early access + menu page entry → CreateOrganization.
-    await habilitarEarlyAccessEAbrirMenu();
-    await fireEvent.press(
-      await screen.findByTestId(
-        'MENU.criar-organizacao',
-        {},
-        {timeout: 15_000},
-      ),
-    );
+    // Configurações → Criar território → CreateOrganization.
+    await abrirCriarTerritorioEmConfiguracoes();
     await waitFor(
       () =>
         expect(
           mockNavigation.getRootState().routes.map(route => route.name),
-        ).toEqual(['Home', 'CreateOrganization']),
+        ).toEqual(['Home', 'AppSettings', 'CreateOrganization']),
       {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-intro-continue-btn'));
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      SEGUNDA_NOME,
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #171: the remote archive is required (even offline) — the field must be
+    // filled and live-validated before create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
 
@@ -356,13 +391,13 @@ describe('segunda organização (navigator real)', () => {
       () =>
         expect(
           mockNavigation.getRootState().routes.map(route => route.name),
-        ).toEqual(['Home', 'OrganizationProvisioning']),
+        ).toEqual(['Home', 'AppSettings', 'OrganizationProvisioning']),
       {timeout: 15_000},
     );
     // B materialized for real: 2/2 verified → pending confirmation, with
     // the confirmation naming B (not A).
     expect(
-      await screen.findByText('Organization created', undefined, {
+      await screen.findByText('Territory created', undefined, {
         timeout: 15_000,
       }),
     ).toBeOnTheScreen();
@@ -408,13 +443,18 @@ describe('segunda organização (navigator real)', () => {
       await screen.findByTestId('HOME.header-title', {}, {timeout: 15_000}),
     ).toHaveTextContent(SEGUNDA_NOME);
 
-    // The selector now exists (length >= 2) and switches back to A.
+    // The selector now exists (length >= 2) and switches back to A. The
+    // entry lives in Configurações (AppSettings), not in the Menu.
     await fireEvent.press(
-      await screen.findByTestId('tabBarButtonMenu', {}, {timeout: 15_000}),
+      await screen.findByTestId(
+        'tabBarButtonConfiguracoes',
+        {},
+        {timeout: 15_000},
+      ),
     );
     await fireEvent.press(
       await screen.findByTestId(
-        'MENU.trocar-organizacao',
+        'settingsSwitchTerritoryButton',
         {},
         {
           timeout: 15_000,
@@ -425,7 +465,7 @@ describe('segunda organização (navigator real)', () => {
       () =>
         expect(
           mockNavigation.getRootState().routes.map(route => route.name),
-        ).toEqual(['Home', 'Organizations']),
+        ).toEqual(['Home', 'AppSettings', 'Organizations']),
       {timeout: 15_000},
     );
     expect(
@@ -560,7 +600,7 @@ describe('segunda organização (navigator real)', () => {
       screen.getByTestId('ORG.provisioning-open-organization-btn'),
     ).toBeOnTheScreen();
     expect(
-      screen.queryByText('Preparing your organization…'),
+      screen.queryByText('Preparing your territory…'),
     ).not.toBeOnTheScreen();
 
     // The way back to the operating organization: the surface returns to
@@ -662,7 +702,7 @@ describe('segunda organização (navigator real)', () => {
       await screen.findByTestId('ORG.provisioning-retry-preparation-btn'),
     ).toBeOnTheScreen();
     expect(
-      screen.queryByTestId('ORG.create-name-inp', {
+      screen.queryByTestId('ORG.create-name-select', {
         includeHiddenElements: true,
       }),
     ).not.toBeOnTheScreen();
@@ -756,7 +796,7 @@ describe('segunda organização (navigator real)', () => {
       // geração 0 — ou seja, a recuperação está em voo (o boot bloqueado
       // não valida papel). B segue intacta e nenhum projeto novo existe.
       expect(
-        await screen.findByText('Loading organization…', undefined, {
+        await screen.findByText('Loading territory…', undefined, {
           timeout: 15_000,
         }),
       ).toBeOnTheScreen();

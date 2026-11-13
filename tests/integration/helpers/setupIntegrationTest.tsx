@@ -3,6 +3,7 @@ import type {MapeoManager} from '@comapeo/core';
 import type {ComapeoCoreClientApi} from '@comapeo/ipc';
 import {createManager, setUpIPC, useRealFetch} from './core';
 import {createAppProvidersWrapper, type UserProfileSeed} from './react';
+import {executarEmOrdem} from './orderedTeardown';
 import type {ActiveProjectIdStore} from '../../../src/frontend/contexts/ActiveProjectIdStoreContext';
 import {MockedAppNavigator} from './navigation';
 import {sleep} from '../../../src/frontend/lib/sleep';
@@ -23,32 +24,6 @@ const ORG_NAME = 'Test Org';
 // ficam acima dos 72s, e o aviso a partir de 20s acusa se a espera voltar.
 const ORCAMENTO_ENCERRAMENTO_MS = 90_000;
 const LIMIAR_LOG_ENCERRAMENTO_MS = 20_000;
-
-/**
- * Runs the teardown steps in order, one at a time, and keeps going after a
- * failure: a failed unmount must not leave the IPC channel, the discovery
- * server or fastify open. The failures still fail the test — a single one is
- * rethrown as is, two or more as an `AggregateError`, in step order.
- */
-export async function executarEmOrdem(
-  passos: ReadonlyArray<() => unknown>,
-): Promise<void> {
-  const erros: Array<unknown> = [];
-  for (const passo of passos) {
-    try {
-      await passo();
-    } catch (erro) {
-      erros.push(erro);
-    }
-  }
-  if (erros.length === 1) throw erros[0];
-  if (erros.length > 1) {
-    throw new AggregateError(
-      erros,
-      `integration teardown: ${erros.length} steps failed`,
-    );
-  }
-}
 
 async function encerrarComRelatorio(ciclo: {encerrar(): Promise<void>}) {
   const inicio = Date.now();
@@ -187,13 +162,22 @@ export function setupIntegrationTest() {
     isOnline = true,
     activeProjectId = projectId,
     userProfile,
+    mapeoApi,
   }: Readonly<{
     isOnline?: boolean;
     activeProjectId?: string;
     userProfile?: UserProfileSeed;
+    /**
+     * Alternative IPC client over the SAME manager. A process restart in
+     * production starts with empty module-level registries (the materializer
+     * keys its live-operation locks on the client object); a test that kills
+     * and reopens the app must therefore mount the new tree with a fresh
+     * client instead of reusing the one the dead operation still holds.
+     */
+    mapeoApi?: ComapeoCoreClientApi;
   }> = {}) => {
     const appProviders = createAppProvidersWrapper({
-      mapeoApi: client,
+      mapeoApi: mapeoApi ?? client,
       isOnline,
       activeProjectId,
       userProfile,

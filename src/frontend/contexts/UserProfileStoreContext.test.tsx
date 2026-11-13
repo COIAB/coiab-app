@@ -12,7 +12,11 @@ import {
   type UserProfileStore,
 } from './UserProfileStoreContext';
 
-const EMPTY_PROFILE = {ethnicity: null, village: null};
+const EMPTY_PROFILE = {
+  ethnicity: null,
+  village: null,
+  coordinationRole: null,
+};
 
 function createWrapper(store: UserProfileStore) {
   return ({children}: {children: ReactNode}) => {
@@ -51,7 +55,7 @@ describe('UserProfileStore', () => {
     );
   });
 
-  test('setEthnicity e setVillage persistem o envelope {state, version: 2}', () => {
+  test('setEthnicity e setVillage persistem o envelope {state, version: 6}', () => {
     const store = createUserProfileStore({persist: true});
 
     store.actions.setEthnicity('  Kaxuyana-Tunayana  ');
@@ -60,10 +64,15 @@ describe('UserProfileStore', () => {
     expect(store.instance.getState()).toStrictEqual({
       ethnicity: 'Kaxuyana-Tunayana',
       village: 'Aldeia X',
+      coordinationRole: null,
     });
     expect(readEnvelope()).toStrictEqual({
-      state: {ethnicity: 'Kaxuyana-Tunayana', village: 'Aldeia X'},
-      version: 2,
+      state: {
+        ethnicity: 'Kaxuyana-Tunayana',
+        village: 'Aldeia X',
+        coordinationRole: null,
+      },
+      version: 6,
     });
   });
 
@@ -76,10 +85,12 @@ describe('UserProfileStore', () => {
     expect(store.instance.getState()).toStrictEqual({
       ethnicity: 'Etnia que não está no catálogo',
       village: 'Aldeia inventada pela comunidade',
+      coordinationRole: null,
     });
     expect(readEnvelope()?.state).toStrictEqual({
       ethnicity: 'Etnia que não está no catálogo',
       village: 'Aldeia inventada pela comunidade',
+      coordinationRole: null,
     });
   });
 
@@ -106,6 +117,7 @@ describe('UserProfileStore', () => {
     expect(segundo.instance.getState()).toStrictEqual({
       ethnicity: 'Mawayana',
       village: 'Aldeia Y',
+      coordinationRole: null,
     });
   });
 
@@ -143,8 +155,12 @@ describe('UserProfileStore', () => {
 
     expect(store.instance.getState().ethnicity).toBe('Tunayana');
     expect(readEnvelope()).toStrictEqual({
-      state: {ethnicity: 'Tunayana', village: null},
-      version: 2,
+      state: {
+        ethnicity: 'Tunayana',
+        village: null,
+        coordinationRole: null,
+      },
+      version: 6,
     });
   });
 
@@ -182,7 +198,14 @@ describe('UserProfileStore', () => {
     ],
     [
       'versão desconhecida',
-      {state: {ethnicity: 'Tunayana', village: 'Aldeia X'}, version: 3},
+      {
+        state: {
+          ethnicity: 'Tunayana',
+          village: 'Aldeia X',
+          coordinationRole: null,
+        },
+        version: 7,
+      },
     ],
   ])('envelope inválido (%s) hidrata vazio', (_nome, value) => {
     writeRaw(persistedRaw(value));
@@ -205,7 +228,68 @@ describe('UserProfileStore', () => {
     expect(store.instance.getState()).toStrictEqual({
       ethnicity: 'Etnia livre',
       village: 'Aldeia livre',
+      coordinationRole: null,
     });
+  });
+
+  test('envelope v3 reidrata o papel', () => {
+    writeRaw(
+      persistedRaw({
+        state: {
+          ethnicity: 'Tunayana',
+          village: 'Aldeia X',
+          coordinationRole: 'coordinator',
+        },
+        version: 3,
+      }),
+    );
+
+    expect(
+      createUserProfileStore({persist: true}).instance.getState(),
+    ).toStrictEqual({
+      ethnicity: 'Tunayana',
+      village: 'Aldeia X',
+      coordinationRole: 'coordinator',
+    });
+  });
+
+  test('setCoordinationRole persiste o papel no envelope v6', () => {
+    const store = createUserProfileStore({persist: true});
+
+    store.actions.setCoordinationRole('coordinator');
+
+    expect(store.instance.getState().coordinationRole).toBe('coordinator');
+    expect(readEnvelope()).toStrictEqual({
+      state: {
+        ethnicity: null,
+        village: null,
+        coordinationRole: 'coordinator',
+      },
+      version: 6,
+    });
+
+    // The persisted role is what a new instance hydrates.
+    expect(
+      createUserProfileStore({persist: true}).instance.getState()
+        .coordinationRole,
+    ).toBe('coordinator');
+  });
+
+  test('papel inválido no envelope v3 hidrata o perfil vazio', () => {
+    writeRaw(
+      persistedRaw({
+        state: {
+          ethnicity: 'Tunayana',
+          village: 'Aldeia X',
+          coordinationRole: 'chief',
+        },
+        version: 3,
+      }),
+    );
+
+    expect(
+      createUserProfileStore({persist: true}).instance.getState(),
+    ).toStrictEqual(EMPTY_PROFILE);
   });
 
   test('setItem lançando: estado não é publicado e a ação repassa o erro', () => {
@@ -231,15 +315,67 @@ describe('UserProfileStore', () => {
   test.each([
     [
       'etnia e aldeia preenchidas',
-      {ethnicity: 'Tunayana', village: 'Aldeia X'},
+      {
+        ethnicity: 'Tunayana',
+        village: 'Aldeia X',
+        coordinationRole: null,
+      },
       true,
     ],
-    ['etnia nula', {ethnicity: null, village: 'Aldeia X'}, false],
-    ['etnia vazia', {ethnicity: '', village: 'Aldeia X'}, false],
-    ['etnia só com espaços', {ethnicity: '   ', village: 'Aldeia X'}, false],
-    ['aldeia nula', {ethnicity: 'Tunayana', village: null}, false],
-    ['aldeia vazia', {ethnicity: 'Tunayana', village: ''}, false],
-    ['aldeia só com espaços', {ethnicity: 'Tunayana', village: '   '}, false],
+    [
+      'etnia nula',
+      {
+        ethnicity: null,
+        village: 'Aldeia X',
+        coordinationRole: null,
+      },
+      false,
+    ],
+    [
+      'etnia vazia',
+      {
+        ethnicity: '',
+        village: 'Aldeia X',
+        coordinationRole: null,
+      },
+      false,
+    ],
+    [
+      'etnia só com espaços',
+      {
+        ethnicity: '   ',
+        village: 'Aldeia X',
+        coordinationRole: null,
+      },
+      false,
+    ],
+    [
+      'aldeia nula',
+      {
+        ethnicity: 'Tunayana',
+        village: null,
+        coordinationRole: null,
+      },
+      false,
+    ],
+    [
+      'aldeia vazia',
+      {
+        ethnicity: 'Tunayana',
+        village: '',
+        coordinationRole: null,
+      },
+      false,
+    ],
+    [
+      'aldeia só com espaços',
+      {
+        ethnicity: 'Tunayana',
+        village: '   ',
+        coordinationRole: null,
+      },
+      false,
+    ],
   ])('isProfileComplete: %s', (_nome, state, expected) => {
     expect(isProfileComplete(state)).toBe(expected);
   });
@@ -263,6 +399,7 @@ describe('UserProfileStore', () => {
     expect(stateHook.result.current).toStrictEqual({
       ethnicity: 'Mawayana',
       village: 'Aldeia W',
+      coordinationRole: null,
     });
   });
 });

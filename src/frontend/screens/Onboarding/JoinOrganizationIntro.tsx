@@ -23,7 +23,7 @@ const m = defineMessages({
     id: '$1screens.OrganizationSetup.waitInviteBody',
     // SPEC B :60 — verbatim.
     defaultMessage:
-      'Ask a person responsible for the Organization to invite this device.',
+      'Ask a person responsible for the Territory to invite this device.',
   },
   back: {
     id: '$1screens.OrganizationSetup.backButton',
@@ -45,7 +45,11 @@ export const JoinOrganizationIntro = ({
   function handleBackPress() {
     if (navigation.canGoBack()) {
       navigation.goBack();
+      return;
     }
+    // Cold start: this route is the initial one, so there is no history to
+    // pop. Back must still reach the role question instead of doing nothing.
+    navigation.replace('Success');
   }
 
   return (

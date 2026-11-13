@@ -14,7 +14,7 @@
     "description": "Subtitle of the invite menu entry"
   },
   "$1Navigation.Menu.criarOrganizacao": {
-    "message": "Criar organização",
+    "message": "Criar território",
     "description": "Menu list entry that opens the organization creation flow"
   },
   "$1Navigation.Menu.earlyAccessOn": {
@@ -30,16 +30,24 @@
     "message": "Olá, Parente",
     "description": "Página Entroncamento greeting (Figma Kutary App V2, 2668:4539)"
   },
+  "$1Navigation.Menu.mapaDeFundo": {
+    "message": "Mapa de fundo",
+    "description": "Menu list entry that opens the background maps screen"
+  },
+  "$1Navigation.Menu.mapaDeFundoSubtitle": {
+    "message": "Mapas offline do território",
+    "description": "Subtitle of the background maps menu entry"
+  },
   "$1Navigation.Menu.switchOrganization": {
-    "message": "Switch organization",
+    "message": "Switch territory",
     "description": "Drawer menu entry that opens the organization selector"
   },
   "$1Navigation.Menu.switchOrganizationSubtitle": {
-    "message": "Escolher outra org",
+    "message": "Escolher outro território",
     "description": "Subtitle of the organization selector menu entry"
   },
   "$1Navigation.Menu.switchOrganizationTitle": {
-    "message": "Trocar de organização",
+    "message": "Trocar de território",
     "description": "Menu list entry that opens the organization selector"
   },
   "$1ObservationEdit.HeaderLeft.discardCancel": {
@@ -57,11 +65,23 @@
     "message": "Discard changes?",
     "description": "Title of dialog that shows when cancelling observation edits"
   },
+  "$1ProjectSettings.RemoteArchive.AddRemoteArchive.checkingUrl": {
+    "message": "Checking remote archive…"
+  },
   "$1ProjectSettings.RemoteArchive.AddRemoteArchive.looking": {
     "message": "Looking for Remote Archive..."
   },
   "$1ProjectSettings.RemoteArchive.AddRemoteArchive.navTitle": {
     "message": "Add Remote Archive"
+  },
+  "$1ProjectSettings.RemoteArchive.AddRemoteArchive.urlRetry": {
+    "message": "Try again"
+  },
+  "$1ProjectSettings.RemoteArchive.AddRemoteArchive.urlUnreachable": {
+    "message": "Could not reach the remote archive. Check the connection and try again."
+  },
+  "$1ProjectSettings.RemoteArchive.AddRemoteArchive.validUrl": {
+    "message": "Remote archive found"
   },
   "$1ProjectSettings.RemoteArchive.AddRemoteArchive.youAreAdding": {
     "message": "You are adding:"
@@ -120,10 +140,6 @@
   "$1Screens.Settings.AppSettings.aboutEkanadyby": {
     "message": "About CoiabApp"
   },
-  "$1Screens.Settings.AppSettings.backgroundMaps": {
-    "message": "Background Map",
-    "description": "Migrated menu entry: background maps"
-  },
   "$1Screens.Settings.AppSettings.coordinateDd": {
     "message": "Decimal Degrees"
   },
@@ -170,7 +186,7 @@
     "message": "No Passcode"
   },
   "$1Screens.Settings.AppSettings.organization": {
-    "message": "Organization",
+    "message": "Territory",
     "description": "Section header for the migrated menu entries"
   },
   "$1Screens.Settings.AppSettings.passcode": {
@@ -581,14 +597,44 @@
     "message": "Go to the map",
     "description": "Action that opens the map of the current work area from the empty observation list"
   },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlChecking": {
+    "message": "Checking remote archive…"
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlInvalid": {
+    "message": "Enter a valid HTTPS URL"
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlLabel": {
+    "message": "Remote archive URL"
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlPlaceholder": {
+    "message": "https://…"
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlRetry": {
+    "message": "Try again"
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlUnreachable": {
+    "message": "Could not reach the remote archive. Check the connection and try again."
+  },
+  "$1screens.Onboarding.CreateOrganization.archiveUrlValid": {
+    "message": "Remote archive found"
+  },
   "$1screens.Onboarding.CreateOrganization.creating": {
-    "message": "Creating Organization…"
+    "message": "Creating Territory…"
   },
   "$1screens.Onboarding.CreateOrganization.creationInProgress": {
-    "message": "An Organization creation is already in progress."
+    "message": "A Territory creation is already in progress."
+  },
+  "$1screens.Onboarding.CreateOrganization.missingArchiveUrl": {
+    "message": "Enter the remote archive URL to continue"
+  },
+  "$1screens.Onboarding.CreateOrganization.missingTerritory": {
+    "message": "Select the territory above to continue"
   },
   "$1screens.Onboarding.CreateOrganization.tooLong": {
-    "message": "Organization name is too long"
+    "message": "Territory name is too long"
+  },
+  "$1screens.Onboarding.CreateOrganization.waitingValidation": {
+    "message": "Waiting for remote archive validation"
   },
   "$1screens.Onboarding.EthnicGroupSelection.continue": {
     "message": "Continue"
@@ -645,10 +691,10 @@
     "message": "Join as a {role}?"
   },
   "$1screens.OrganizationInviteReceived.joinOrganization": {
-    "message": "Join Organization"
+    "message": "Join Territory"
   },
   "$1screens.OrganizationInviteReceived.organizationName": {
-    "message": "Organization"
+    "message": "Territory"
   },
   "$1screens.OrganizationInviteReceived.participantRole": {
     "message": "participant"
@@ -658,6 +704,21 @@
   },
   "$1screens.OrganizationSetup.alertsRow": {
     "message": "Alerts"
+  },
+  "$1screens.OrganizationSetup.archiveApplying": {
+    "message": "Adding"
+  },
+  "$1screens.OrganizationSetup.archiveDone": {
+    "message": "Ready"
+  },
+  "$1screens.OrganizationSetup.archiveFailed": {
+    "message": "Not added"
+  },
+  "$1screens.OrganizationSetup.archivePending": {
+    "message": "Pending"
+  },
+  "$1screens.OrganizationSetup.archiveRow": {
+    "message": "Remote archive"
   },
   "$1screens.OrganizationSetup.areaNotComplete": {
     "message": "Not completed"
@@ -672,7 +733,7 @@
     "message": "Waiting"
   },
   "$1screens.OrganizationSetup.backBlocked": {
-    "message": "You cannot leave this screen while an organization operation is in progress.",
+    "message": "You cannot leave this screen while a territory operation is in progress.",
     "description": "Shown when a back attempt is prevented (SPEC B §3.2:64/:68, Fase 5)"
   },
   "$1screens.OrganizationSetup.backButton": {
@@ -682,59 +743,50 @@
     "message": "Continue"
   },
   "$1screens.OrganizationSetup.createIntroBody": {
-    "message": "Your Organization will have Monitoramento and Alertas, with categories ready to use. You can create it without internet."
+    "message": "Your Territory will have Monitoring and Alerts, with categories ready to use. You can create it without internet."
   },
   "$1screens.OrganizationSetup.createOrganization": {
-    "message": "Create Organization"
+    "message": "Create Territory"
   },
   "$1screens.OrganizationSetup.createdBody": {
     "message": "{organizationName} is ready. Monitoring and Alerts are already available."
   },
   "$1screens.OrganizationSetup.createdTitle": {
-    "message": "Organization created"
-  },
-  "$1screens.OrganizationSetup.emptyName": {
-    "message": "Enter the Organization name."
+    "message": "Territory created"
   },
   "$1screens.OrganizationSetup.failureBody": {
     "message": "What was already prepared is saved. Try again to finish."
   },
   "$1screens.OrganizationSetup.failureTitle": {
-    "message": "Could not finish creating the organization."
+    "message": "Could not finish creating the territory."
   },
   "$1screens.OrganizationSetup.loadingOrganization": {
-    "message": "Loading organization…"
+    "message": "Loading territory…"
   },
   "$1screens.OrganizationSetup.monitoringRow": {
     "message": "Monitoring"
   },
   "$1screens.OrganizationSetup.nameGuidance": {
-    "message": "Choose a name for your Organization."
+    "message": "Choose a name for your Territory."
   },
   "$1screens.OrganizationSetup.nameLabel": {
-    "message": "Organization name"
+    "message": "Territory name"
   },
   "$1screens.OrganizationSetup.nameNotIdentity": {
-    "message": "Using the same name as another Organization does not connect the devices. To join an existing Organization, wait for an invitation."
-  },
-  "$1screens.OrganizationSetup.noOrganizationBody": {
-    "message": "Your device is not yet part of an Organization"
-  },
-  "$1screens.OrganizationSetup.noOrganizationGuidance": {
-    "message": "Create an Organization or wait for an invitation to join an existing one."
+    "message": "Using the same name as another Territory does not connect the devices. To join an existing Territory, wait for an invitation."
   },
   "$1screens.OrganizationSetup.openOrganizationButton": {
-    "message": "Open organization"
+    "message": "Open territory"
   },
   "$1screens.OrganizationSetup.openingOrganization": {
-    "message": "Opening organization…",
+    "message": "Opening territory…",
     "description": "The selector sheet while an activation is in flight (SPEC A §5.2:165, “Abrindo organização…”)"
   },
   "$1screens.OrganizationSetup.pacoteNaoAprovado": {
     "message": "Could not prepare the necessary files on this device. Nothing was created."
   },
   "$1screens.OrganizationSetup.pendingWork": {
-    "message": "Finish or discard the record before switching organization",
+    "message": "Finish or discard the record before switching territory",
     "description": "Blocked boot with work in progress (SPEC A §4.4:149 canonical pending-work string, CA15)"
   },
   "$1screens.OrganizationSetup.preparingSlowNotice": {
@@ -742,31 +794,47 @@
     "description": "Shown after 30 s inside preparando (SPEC B §3.2:68); the wait never authorizes another call"
   },
   "$1screens.OrganizationSetup.preparingStepA11y": {
-    "message": "Preparing your organization"
+    "message": "Preparing your territory"
   },
   "$1screens.OrganizationSetup.preparingTitle": {
-    "message": "Preparing your organization…"
+    "message": "Preparing your territory…"
   },
   "$1screens.OrganizationSetup.retryActivationButton": {
     "message": "Try again",
     "description": "Reactivates the settled organization after a failed open (SPEC B §4.4:120, “Tentar novamente”)"
   },
+  "$1screens.OrganizationSetup.retryArchiveBlocked": {
+    "message": "Finish the preparation before retrying the archive."
+  },
+  "$1screens.OrganizationSetup.retryArchiveButton": {
+    "message": "Try again",
+    "description": "Retries applying the remote archive to this territory only"
+  },
+  "$1screens.OrganizationSetup.retryArchiveInProgress": {
+    "message": "Wait for the current upload to finish, then try again."
+  },
   "$1screens.OrganizationSetup.retryPreparationButton": {
     "message": "Try again"
+  },
+  "$1screens.OrganizationSetup.roleCoordinatorButton": {
+    "message": "Yes, I am a coordinator"
+  },
+  "$1screens.OrganizationSetup.roleParticipantButton": {
+    "message": "No, I am a participant"
+  },
+  "$1screens.OrganizationSetup.roleQuestion": {
+    "message": "Are you a coordinator?"
   },
   "$1screens.OrganizationSetup.syncRestartRequired": {
     "message": "Sync needs to be started again.",
     "description": "A failed switch after the sync commands were already stopped (SPEC A §5.2:167, “A sincronização precisa ser iniciada novamente.”)"
   },
   "$1screens.OrganizationSetup.unavailableTitle": {
-    "message": "Could not open your organization",
+    "message": "Could not open your territory",
     "description": "A settled organization the engine could not open (SPEC B §4.4:120 / SPEC A §6.2:214, “Organização indisponível”)"
   },
   "$1screens.OrganizationSetup.waitInviteBody": {
-    "message": "Ask a person responsible for the Organization to invite this device."
-  },
-  "$1screens.OrganizationSetup.waitInviteButton": {
-    "message": "Wait for an invitation"
+    "message": "Ask a person responsible for the Territory to invite this device."
   },
   "$1screens.OrganizationSetup.waitInviteTitle": {
     "message": "Wait for an invitation"
@@ -776,14 +844,14 @@
     "description": "Badge naming the organization this device operates in right now"
   },
   "$1screens.Organizations.title": {
-    "message": "Organizations",
+    "message": "Territories",
     "description": "Title of the organization selector modal"
   },
   "$1screens.PhotoPreviewModal.headerButtonText": {
     "message": "Delete Photo"
   },
   "$1screens.RemoteArchive.AddRemoteArchive.orgHint": {
-    "message": "This archive will be added to both projects of the Organization."
+    "message": "This archive will be added to both projects of the Territory."
   },
   "$1screens.RemovedFromProjectBottomSheet.close": {
     "message": "Close"
@@ -847,7 +915,7 @@
     "message": "Done"
   },
   "$1screens.Setting.ProjectSettings.YourTeam.InviteAccepted.partOfOrganization": {
-    "message": "<bold>{deviceName}</bold> is now part of your Organization."
+    "message": "<bold>{deviceName}</bold> is now part of your Territory."
   },
   "$1screens.Setting.ProjectSettings.YourTeam.InviteAccepted.partOfProject": {
     "message": "<bold>{deviceName}</bold> is now part of your project."
@@ -913,7 +981,7 @@
     "message": "Close"
   },
   "$1screens.Settings.YourTeam.inviteDeclinedOrganizationDes": {
-    "message": "This device has declined your invitation. They have not joined the Organization."
+    "message": "This device has declined your invitation. They have not joined the Territory."
   },
   "$1screens.Sync.NoWifiDisplay.buttonText": {
     "message": "Close"
@@ -1004,13 +1072,13 @@
     "message": "Go back"
   },
   "$1screens.YourTeam.ReviewOrganizationInvite.noOrganization": {
-    "message": "No Organization found"
+    "message": "No Territory found"
   },
   "$1screens.YourTeam.ReviewOrganizationInvite.retry": {
     "message": "Invite Again"
   },
   "$1screens.YourTeam.ReviewOrganizationInvite.sendInvite": {
-    "message": "Invite to Organization"
+    "message": "Invite to Territory"
   },
   "$1screens.YourTeam.ReviewOrganizationInvite.timer": {
     "message": "Invite sent {seconds}s ago"
@@ -1049,10 +1117,10 @@
     "description": "Chip de detalhes do card (Figma 2668:4539)"
   },
   "$1sharedComponents.OrganizationAreaAccesses.pendingWork": {
-    "message": "Finish or discard the record before switching organization",
+    "message": "Finish or discard the record before switching territory",
     "description": "Blocked area switch (SPEC A §4.4:149 canonical pending-work string)"
   },
   "$1sharedComponents.OrganizationRepairBanner.needsAttention": {
-    "message": "An Organization on this device needs attention"
+    "message": "A Territory on this device needs attention"
   }
 }

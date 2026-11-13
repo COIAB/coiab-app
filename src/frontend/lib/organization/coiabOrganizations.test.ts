@@ -430,3 +430,178 @@ describe('organizacaoEmPreparo (seletor puro da organização em preparo)', () =
     ]);
   });
 });
+
+describe('arquivo remoto no documento (#142)', () => {
+  test('round-trip preserva o bloco por slot', () => {
+    const org = criarOrganizacaoPronta({
+      arquivoRemoto: {
+        url: 'https://arquivo.example/',
+        estado: 'falha_recuperavel',
+        slots: {
+          m: {
+            estado: 'concluido',
+            tentativaId: 'tentativa-m',
+            remocaoId: 'remocao-m',
+            iniciadaEm: 111,
+            replayConsumido: true,
+          },
+          a: {
+            estado: 'falha_recuperavel',
+            tentativaId: 'tentativa-a',
+            iniciadaEm: 222,
+            replayConsumido: false,
+            erro: 'arquivo-indisponivel',
+          },
+        },
+      },
+    });
+    const documento: EstadoOrganizacoes = {
+      versao: 1,
+      organizacoes: [org],
+      ativa: null,
+    };
+
+    const parsed = parseEstadoOrganizacoes(
+      JSON.parse(JSON.stringify(documento)),
+    );
+
+    expect(parsed).toEqual(documento);
+  });
+
+  test('round-trip preserva baseUrl e deviceId do slot (identidade)', () => {
+    const org = criarOrganizacaoPronta({
+      arquivoRemoto: {
+        url: 'https://original.example/',
+        estado: 'removendo',
+        slots: {
+          m: {
+            estado: 'removendo',
+            remocaoId: 'remocao-m',
+            baseUrl: 'https://original.example',
+            deviceId: 'server-a',
+          },
+          a: {
+            estado: 'concluido',
+            tentativaId: 'tentativa-a',
+            baseUrl: 'https://original.example',
+            deviceId: 'server-a',
+          },
+        },
+      },
+    });
+    const documento: EstadoOrganizacoes = {
+      versao: 1,
+      organizacoes: [org],
+      ativa: null,
+    };
+
+    // REAL parser, both directions: persist (JSON) then rehydrate.
+    const parsed = parseEstadoOrganizacoes(
+      JSON.parse(JSON.stringify(documento)),
+    );
+
+    expect(parsed).toEqual(documento);
+    expect(parsed?.organizacoes[0]?.arquivoRemoto?.slots.m).toEqual({
+      estado: 'removendo',
+      remocaoId: 'remocao-m',
+      baseUrl: 'https://original.example',
+      deviceId: 'server-a',
+    });
+  });
+
+  test('estado terminal `removido` sobrevive ao round-trip', () => {
+    const org = criarOrganizacaoPronta({
+      arquivoRemoto: {
+        url: 'https://arquivo.example/',
+        estado: 'removido',
+        // Fixture coherent with `estadoAgregado`: `removido` é terminal só
+        // quando TODOS os slots foram removidos; um `concluido` irmão tornaria
+        // o agregado `concluido` (#147 item 2).
+        slots: {
+          m: {estado: 'removido'},
+          a: {estado: 'removido', tentativaId: 'tentativa-a'},
+        },
+      },
+    });
+    const documento: EstadoOrganizacoes = {
+      versao: 1,
+      organizacoes: [org],
+      ativa: null,
+    };
+
+    const parsed = parseEstadoOrganizacoes(
+      JSON.parse(JSON.stringify(documento)),
+    );
+
+    expect(parsed).toEqual(documento);
+    expect(parsed?.organizacoes[0]?.arquivoRemoto?.slots.m).toEqual({
+      estado: 'removido',
+    });
+  });
+
+  test('documento antigo sem o campo continua válido', () => {
+    const org = criarOrganizacaoPronta();
+    const documento: EstadoOrganizacoes = {
+      versao: 1,
+      organizacoes: [org],
+      ativa: null,
+    };
+
+    const parsed = parseEstadoOrganizacoes(
+      JSON.parse(JSON.stringify(documento)),
+    );
+
+    expect(parsed).toEqual(documento);
+  });
+
+  test('campo corrompido descarta o bloco e mantém a organização', () => {
+    const org = criarOrganizacaoPronta();
+    const corrompido = {
+      ...org,
+      arquivoRemoto: {url: 42, estado: 'inexistente', slots: null},
+    };
+    const documento = {
+      versao: 1 as const,
+      organizacoes: [corrompido],
+      ativa: null,
+    };
+
+    const parsed = parseEstadoOrganizacoes(documento);
+
+    expect(parsed?.organizacoes[0]).toEqual(org);
+  });
+});
+
+describe('recalculo do agregado do arquivo remoto (#147 item 2)', () => {
+  test('hidratação corrige agregado divergente a partir dos slots', () => {
+    const org = criarOrganizacaoPronta({
+      arquivoRemoto: {
+        url: 'https://arquivo.example/',
+        estado: 'concluido',
+        slots: {
+          m: {estado: 'concluido'},
+          a: {estado: 'falha_recuperavel', erro: 'arquivo-indisponivel'},
+        },
+      },
+    });
+    const documento: EstadoOrganizacoes = {
+      versao: 1,
+      organizacoes: [org],
+      ativa: null,
+    };
+
+    const parsed = parseEstadoOrganizacoes(
+      JSON.parse(JSON.stringify(documento)),
+    );
+
+    // O agregado persistido dizia "concluido"; um slot em falha deve manter o
+    // retry visível após o restart.
+    expect(parsed?.organizacoes[0]?.arquivoRemoto?.estado).toBe(
+      'falha_recuperavel',
+    );
+    expect(parsed?.organizacoes[0]?.arquivoRemoto?.slots).toEqual({
+      m: {estado: 'concluido'},
+      a: {estado: 'falha_recuperavel', erro: 'arquivo-indisponivel'},
+    });
+  });
+});

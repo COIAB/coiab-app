@@ -25,6 +25,7 @@ import {useOrganizationActivationContext} from '../../contexts/OrganizationActiv
 import {
   isProfileComplete,
   useUserProfileState,
+  type CoordinationRole,
 } from '../../contexts/UserProfileStoreContext';
 import {AuthScreen} from '../../screens/AuthScreen';
 import {Success} from '../../screens/Onboarding/Success';
@@ -66,7 +67,7 @@ const m = defineMessages({
   // navigator registers no route, so no project screen can mount behind it.
   loadingOrganization: {
     id: '$1screens.OrganizationSetup.loadingOrganization',
-    defaultMessage: 'Loading organization…',
+    defaultMessage: 'Loading territory…',
   },
 });
 
@@ -90,9 +91,11 @@ const m = defineMessages({
  * `profileComplete` (#128) gates ONLY the empty document: a device with no
  * organizations still has one step of onboarding left after the device name,
  * so an incomplete profile opens the ethnic-group flow instead of the
- * create/join fork. Every other branch — pending documents, a settled
- * document's activation, and the auth/device-name guards — is unaffected by
- * the profile.
+ * create/join fork. `coordinationRole` (#129) then splits that fork: a
+ * coordinator opens the creation form, a participant the invitation intro,
+ * and an unanswered role the question on Success. Every other branch —
+ * pending documents, a settled document's activation, and the
+ * auth/device-name guards — is unaffected by the profile.
  */
 export function getInitialRoute(
   authState: 'authenticated' | 'unauthenticated' | 'obscured',
@@ -100,6 +103,7 @@ export function getInitialRoute(
   documento: DocumentoGate,
   ativacao: ActivationStatus,
   profileComplete: boolean,
+  coordinationRole: CoordinationRole,
 ): keyof AppStackParamsList {
   if (authState === 'unauthenticated') {
     return 'AuthScreen';
@@ -111,7 +115,10 @@ export function getInitialRoute(
     return 'OrganizationProvisioning';
   }
   if (documento === 'nenhum') {
-    return profileComplete ? 'Success' : 'EthnicGroupSelection';
+    if (!profileComplete) return 'EthnicGroupSelection';
+    if (coordinationRole === 'coordinator') return 'CreateOrganization';
+    if (coordinationRole === 'participant') return 'JoinOrganizationIntro';
+    return 'Success';
   }
   if (ativacao === 'ready') {
     return 'Home';
@@ -338,6 +345,7 @@ export const RootStackNavigator = () => {
     documento,
     ativacao,
     profileComplete,
+    profileState.coordinationRole,
   );
 
   if (aguardandoAbertura) {

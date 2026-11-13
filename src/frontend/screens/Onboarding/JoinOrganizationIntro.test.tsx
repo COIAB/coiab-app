@@ -17,7 +17,7 @@ import type {AppStackParamsList} from '../../sharedTypes/navigation';
 const PT_MESSAGES = {
   '$1screens.OrganizationSetup.waitInviteTitle': 'Aguardar convite',
   '$1screens.OrganizationSetup.waitInviteBody':
-    'Peça a uma pessoa responsável pela organização para convidar este dispositivo.',
+    'Peça a uma pessoa responsável pelo território para convidar este dispositivo.',
   '$1screens.OrganizationSetup.backButton': 'Voltar',
 };
 
@@ -26,11 +26,13 @@ const navigationRef = createNavigationContainerRef<AppStackParamsList>();
 
 const SuccessStub = () => <Text>BACK-REACHED</Text>;
 
-async function renderScreen() {
+async function renderScreen(
+  initialRouteName: 'Success' | 'JoinOrganizationIntro',
+) {
   return render(
     <IntlProvider locale="pt-BR" messages={PT_MESSAGES}>
       <NavigationContainer ref={navigationRef}>
-        <Stack.Navigator initialRouteName="Success">
+        <Stack.Navigator initialRouteName={initialRouteName}>
           <Stack.Screen name="Success" component={SuccessStub} />
           <Stack.Screen
             name="JoinOrganizationIntro"
@@ -45,23 +47,36 @@ async function renderScreen() {
 
 describe('JoinOrganizationIntro', () => {
   test('renders title, waiting body and back button in exact pt-BR', async () => {
-    await renderScreen();
+    await renderScreen('Success');
     navigationRef.navigate('JoinOrganizationIntro');
 
     expect(await screen.findByText('Aguardar convite')).toBeOnTheScreen();
     expect(
       screen.getByText(
-        'Peça a uma pessoa responsável pela organização para convidar este dispositivo.',
+        'Peça a uma pessoa responsável pelo território para convidar este dispositivo.',
       ),
     ).toBeOnTheScreen();
     expect(screen.getByTestId('ORG.join-intro-back-btn')).toBeOnTheScreen();
   });
 
   test('the back button returns to the previous screen', async () => {
-    await renderScreen();
+    await renderScreen('Success');
     navigationRef.navigate('JoinOrganizationIntro');
 
     expect(await screen.findByText('Aguardar convite')).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByTestId('ORG.join-intro-back-btn'));
+
+    expect(await screen.findByText('BACK-REACHED')).toBeOnTheScreen();
+  });
+
+  test('on a cold start with no previous route, Back opens the role question', async () => {
+    // The startup gate makes this the initial route for a participant, so
+    // there is nothing to pop; Back must land on the question (Success).
+    await renderScreen('JoinOrganizationIntro');
+
+    expect(await screen.findByText('Aguardar convite')).toBeOnTheScreen();
+    expect(navigationRef.canGoBack()).toBe(false);
 
     await fireEvent.press(screen.getByTestId('ORG.join-intro-back-btn'));
 

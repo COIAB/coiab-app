@@ -176,6 +176,7 @@ jest.mock('../../lib/organization/pacotesInstalados', () => {
 
 import {MMKVStoreInitializer} from '../../hooks/persistedState/createPersistedState';
 import {COIAB_ORGANIZATIONS_STORAGE_KEY} from '../../contexts/CoiabOrganizationsStoreContext';
+import {COIAB_ORANGE, COIAB_RED, DARK_GREY} from '../../lib/styles';
 import {
   derivarProjectIdAtivo,
   type EstadoOrganizacoes,
@@ -318,13 +319,52 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
   const freshSetup = setupIntegrationTestWithoutProject();
   const orgSetup = setupIntegrationTest();
 
+  // #142: the create button now unlocks only after the live validation hook
+  // reaches the archive's `/info` endpoint. The integration test drives the
+  // REAL hook, so a global `fetch` mock must answer 200 with an archive name
+  // for the button to enable. Saved/restored around each test.
+  let fetchOriginal: typeof global.fetch;
+  // #149: handle on the installed mock so a test can prove Core actually went
+  // through it (instead of the real network) for the archive writes.
+  let fetchMock: jest.Mock;
+
   afterEach(() => {
     // The document is durable by design too: a seeded pending confirmation
     // must not leak from the test that wrote it into the next device state.
     MMKVStoreInitializer.removeItem(COIAB_ORGANIZATIONS_STORAGE_KEY);
+    global.fetch = fetchOriginal;
   });
 
   beforeEach(() => {
+    fetchOriginal = global.fetch;
+    // Answer the archive host entirely from the mock: the `/info` probe the
+    // live-validation hook makes returns 200, and every other archive request
+    // fails fast. #149: Core's `addServerPeer` does `PUT /projects` with no
+    // timeout of its own; with CI egress blocked that request hangs, the RPCs
+    // stay in flight, and setUpIPC's 4 s drain fails. These tests assert
+    // creation/confirmation/Home — never the remote archive's state — so an
+    // immediate 503 on the PUT is safe and keeps them off the real network.
+    // Other hosts (e.g. the local fastify server) still use the real fetch.
+    fetchMock = jest.fn((input: unknown, init?: unknown) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/info')) {
+        return Promise.resolve({
+          status: 200,
+          json: async () => ({data: {name: 'Arquivo Remoto'}}),
+        } as Response);
+      }
+      if (url.includes('exemplo.org')) {
+        return Promise.resolve({
+          status: 503,
+          json: async () => ({error: 'unavailable'}),
+        } as Response);
+      }
+      return (fetchOriginal as (i: unknown, n?: unknown) => Promise<Response>)(
+        input,
+        init,
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof global.fetch;
     // The teardown of a FAILED test cannot be awaited by the next one: an
     // engine operation left mid-flight by a failure is killed when Core's
     // IPC stops, and its rejection path writes the recovered journal
@@ -396,12 +436,19 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
   test('a delayed project refresh holds the confirmation up without offering creation again', async () => {
     await freshSetup.renderNavigationAsync();
     await fireEvent.press(
-      await screen.findByTestId('ONBOARDING.create-org-btn'),
+      await screen.findByTestId('ONBOARDING.role-coordinator-btn'),
     );
     await fireEvent.press(screen.getByTestId('ORG.create-intro-continue-btn'));
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      'New Org',
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #142: the create button unlocks only after the live validation reaches
+    // `/info` (600 ms debounce + the mocked 200 response).
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
 
     const listProjects = freshSetup.manager.listProjects.bind(
@@ -451,8 +498,12 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       // aria-hidden underneath, so "not re-offered" is asserted on the
       // create form's own button and on the route stack, not on the
       // fork's copy.)
-      expect(screen.getByTestId('ORG.create-name-inp')).toBeOnTheScreen();
-      expect(screen.getByText('Creating Organization…')).toBeOnTheScreen();
+      expect(
+        screen.getByTestId('ORG.create-name-select', {
+          includeHiddenElements: true,
+        }),
+      ).toBeOnTheScreen();
+      expect(screen.getByText('Creating Territory…')).toBeOnTheScreen();
       expect(screen.queryByTestId('ORG.create-btn')).not.toBeOnTheScreen();
       // "Nothing bounced to Home" covers the whole Home screen — under the
       // 5-tab bar (#32) its initial tab is Entroncamento, not the Map.
@@ -472,7 +523,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       );
       // While the refresh was gated the document had already published the
       // confirmation; nothing bounced to Home and nothing offers creation.
-      expect(await screen.findByText('Organization created')).toBeOnTheScreen();
+      expect(await screen.findByText('Territory created')).toBeOnTheScreen();
       // The tap is the ONLY way Home opens (SPEC A §4.2 regra 9).
       await fireEvent.press(
         screen.getByTestId('ORG.provisioning-open-organization-btn'),
@@ -483,7 +534,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       });
       expect(screen.getByTestId('ENTRONCAMENTO.scrn')).toBeOnTheScreen();
       expect(
-        screen.queryByTestId('ONBOARDING.create-org-btn'),
+        screen.queryByTestId('ONBOARDING.role-coordinator-btn'),
       ).not.toBeOnTheScreen();
       expect(screen.queryByTestId('ORG.create-btn')).not.toBeOnTheScreen();
       expect(await listProjects()).toHaveLength(2);
@@ -500,7 +551,12 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     });
     await freshSetup.renderNavigationAsync({activeProjectId: legacyProjectId});
 
-    expect(await screen.findByText('Wait for an invitation')).toBeOnTheScreen();
+    expect(
+      await screen.findByTestId('ONBOARDING.role-coordinator-btn'),
+    ).toBeOnTheScreen();
+    expect(
+      screen.getByTestId('ONBOARDING.role-participant-btn'),
+    ).toBeOnTheScreen();
     expect(screen.getByText('test is ready!')).toBeOnTheScreen();
   });
 
@@ -511,7 +567,9 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     // dados marcados ficam preservados (plan Q7), porém não são
     // reconhecidos como organização.
     await orgSetup.renderNavigation();
-    expect(await screen.findByText('Wait for an invitation')).toBeOnTheScreen();
+    expect(
+      await screen.findByTestId('ONBOARDING.role-coordinator-btn'),
+    ).toBeOnTheScreen();
     expect(screen.getByText('test is ready!')).toBeOnTheScreen();
     expect(screen.queryByTestId('MAIN.map-screen')).not.toBeOnTheScreen();
     // #118 ciclo 5 (caso negativo): sem organização salva a janela de
@@ -544,9 +602,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       await orgSetup.renderNavigation();
       // A janela de carregamento: loader canônico na tela e NENHUMA rota
       // registrada — a bifurcação (Success) nunca chega a montar.
-      expect(
-        await screen.findByText('Loading organization…'),
-      ).toBeOnTheScreen();
+      expect(await screen.findByText('Loading territory…')).toBeOnTheScreen();
       // #118 ciclo 5: a janela de carregamento é a TelaCarregamento do tema
       // escuro — o rótulo canônico e o testID dela coexistem na mesma árvore.
       expect(screen.getByTestId('CARREGAMENTO.scrn')).toBeOnTheScreen();
@@ -731,7 +787,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       // reconstruído: a confirmação pendente é a superfície de abertura e,
       // com 5b-1, renderiza a visão guiada pelo documento (a confirmação),
       // não o texto genérico de preparação da era fanout.
-      expect(await screen.findByText('Organization created')).toBeOnTheScreen();
+      expect(await screen.findByText('Territory created')).toBeOnTheScreen();
       // Nenhum escritor projetou o slot por baixo da confirmação pendente:
       // o id legado segue exatamente o valor semeado.
       expect(freshSetup.activeProjectId).toBe(standaloneProjectId);
@@ -744,12 +800,19 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
   test('e2e: criar → confirmação → Abrir organização → Home com o nome da organização (SPEC B §3.3)', async () => {
     await freshSetup.renderNavigationAsync();
     await fireEvent.press(
-      await screen.findByTestId('ONBOARDING.create-org-btn'),
+      await screen.findByTestId('ONBOARDING.role-coordinator-btn'),
     );
     await fireEvent.press(screen.getByTestId('ORG.create-intro-continue-btn'));
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      '  Minha Org  ',
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #142: wait for the live validation to unlock the button (debounce +
+    // mocked 200 `/info`) before pressing create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
 
@@ -765,7 +828,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     // no core: dois projetos + imports + conferência): o default de 1000 ms
     // é insuficiente sob carga — precedente JoinProjectIntro.
     expect(
-      await screen.findByText('Organization created', undefined, {
+      await screen.findByText('Territory created', undefined, {
         timeout: 15_000,
       }),
     ).toBeOnTheScreen();
@@ -781,7 +844,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     // organização — com espaços das bordas removidos no save.
     expect(
       await screen.findByTestId('MENU.greeting-project'),
-    ).toHaveTextContent('Minha Org');
+    ).toHaveTextContent('Kaxuyana-Tunayana');
     // A prova de que o PROJETO ATIVO do app trocou (SPEC A §4.2 regra 5) é o
     // título do header da aba Map: `HOME.header-title` vem de
     // `useOrganizacaoAtiva`, que só nomeia a organização enquanto a seleção
@@ -792,7 +855,15 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     );
     expect(
       await screen.findByTestId('HOME.header-title', {}, {timeout: 15_000}),
-    ).toHaveTextContent('Minha Org');
+    ).toHaveTextContent('Kaxuyana-Tunayana');
+    // Header da Home (SPEC B §3.3/T4): território e área em faixas
+    // empilhadas; Monitoramento pinta a faixa de área com COIAB_ORANGE.
+    expect(
+      await screen.findByTestId('HOME.header-area', {}, {timeout: 15_000}),
+    ).toHaveTextContent('Monitoramento Territorial');
+    expect(screen.getByTestId('HOME.header-faixa-area')).toHaveStyle({
+      backgroundColor: COIAB_ORANGE,
+    });
     // A escrita única do toque gravou reconhecimento e seleção juntos.
     const raw = documentoPersistido();
     const organizacaoCriada = raw.organizacoes[0];
@@ -803,23 +874,74 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     });
     // CA4: exatamente dois projetos, sem um terceiro.
     expect(await freshSetup.manager.listProjects()).toHaveLength(2);
-  }, 20000);
+    // #149: o Core fez o PUT de cada projeto pelo mock, e não pela rede real —
+    // sem isso o request penduraria o drain do setUpIPC no CI lento.
+    const putsArquivo = fetchMock.mock.calls.filter(([input, init]) => {
+      const url = String(input);
+      const metodo = (init as {method?: string} | undefined)?.method;
+      return url.includes('exemplo.org/projects') && metodo === 'PUT';
+    });
+    expect(putsArquivo).toHaveLength(2);
+
+    // Troca de área pelo caminho real (#124): o id do slot de
+    // Monitoramento — guardado antes da troca — é a referência para provar
+    // que o projeto ativo mudou.
+    const monitoramentoId =
+      organizacaoCriada!.materializacao.monitoramento.projectId;
+    expect(monitoramentoId).toBeTruthy();
+    await fireEvent.press(await screen.findByTestId('tabBarButtonMenu'));
+    await fireEvent.press(
+      await screen.findByTestId('MENU.area-alertas', {}, {timeout: 15_000}),
+    );
+    // useTrocarArea reseta a pilha para o mapa; espera o destino montar.
+    expect(
+      await screen.findByTestId('MAIN.map-screen', {}, {timeout: 15_000}),
+    ).toBeOnTheScreen();
+    // O header reflete a área nova sem perder território nem título.
+    expect(
+      await screen.findByTestId('HOME.header-area', {}, {timeout: 15_000}),
+    ).toHaveTextContent('Alertas');
+    expect(screen.getByTestId('HOME.header-faixa-area')).toHaveStyle({
+      backgroundColor: COIAB_RED,
+    });
+    expect(screen.getByTestId('HOME.header-faixa-territorio')).toHaveStyle({
+      backgroundColor: DARK_GREY,
+    });
+    expect(screen.getByTestId('HOME.header-title')).toHaveTextContent(
+      'Kaxuyana-Tunayana',
+    );
+    const aposTroca = documentoPersistido();
+    expect(aposTroca.ativa?.area).toBe('alertas');
+    // O projeto ativo derivado do documento é o do slot de Alertas — não o
+    // de Monitoramento guardado antes da troca.
+    expect(derivarProjectIdAtivo(aposTroca)).not.toBe(monitoramentoId);
+    expect(derivarProjectIdAtivo(aposTroca)).toBe(
+      organizacaoCriada!.materializacao.alertas.projectId,
+    );
+  }, 40000);
 
   test('reinício antes do toque reapresenta a confirmação e mantém ativa nula (CA10)', async () => {
     const desmontar = await freshSetup.renderNavigationAsync();
     await fireEvent.press(
-      await screen.findByTestId('ONBOARDING.create-org-btn'),
+      await screen.findByTestId('ONBOARDING.role-coordinator-btn'),
     );
     await fireEvent.press(screen.getByTestId('ORG.create-intro-continue-btn'));
+    await fireEvent.press(screen.getByTestId('ORG.create-name-option-4999'));
     await fireEvent.changeText(
-      screen.getByTestId('ORG.create-name-inp'),
-      'Minha Org',
+      screen.getByTestId('ORG.create-archive-url-inp'),
+      'https://exemplo.org/',
+    );
+    // #142: wait for the live validation to unlock the button (debounce +
+    // mocked 200 `/info`) before pressing create.
+    await waitFor(
+      () => expect(screen.getByTestId('ORG.create-btn')).toBeEnabled(),
+      {timeout: 15_000},
     );
     await fireEvent.press(screen.getByTestId('ORG.create-btn'));
     // Aguarda a publicação pronta SEM tocar em Abrir organização. Espera de
     // I/O real (materialização no core): o default de 1000 ms é insuficiente
     // sob carga — precedente JoinProjectIntro.
-    await screen.findByText('Organization created', undefined, {
+    await screen.findByText('Territory created', undefined, {
       timeout: 15_000,
     });
 
@@ -829,7 +951,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     await freshSetup.renderNavigationAsync();
 
     // A confirmação é reapresentada — não a preparação, não a Home.
-    expect(await screen.findByText('Organization created')).toBeOnTheScreen();
+    expect(await screen.findByText('Territory created')).toBeOnTheScreen();
     expect(
       await screen.findByTestId('ORG.provisioning-open-organization-btn'),
     ).toBeOnTheScreen();
@@ -840,7 +962,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
     expect(await freshSetup.manager.listProjects()).toHaveLength(2);
   }, 20000);
 
-  test('par ativo mantém a entrada da página de Menu capaz de abrir Organizations', async () => {
+  test('par ativo mantém a entrada de Configurações capaz de abrir Organizations', async () => {
     const segundaId = 'fedcba9876543210';
     const segundaMonitoramentoId = await orgSetup.client.createProject({
       name: 'Monitoramento Beta',
@@ -875,23 +997,17 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       await screen.findByTestId('ENTRONCAMENTO.scrn', {}, {timeout: 15_000}),
     ).toBeOnTheScreen();
 
-    // Enable the existing feature flag through its real registered screen,
-    // then return to Home and exercise the menu page entry itself.
-    await act(async () => {
-      mockNavigation.navigate('EarlyAccess');
-    });
+    // The selector entry lives in Configurações (AppSettings) since #145.
     await fireEvent.press(
-      await screen.findByTestId('EA.checkbox-off', {}, {timeout: 15_000}),
-    );
-    await act(async () => {
-      mockNavigation.goBack();
-    });
-    await fireEvent.press(
-      await screen.findByTestId('tabBarButtonMenu', {}, {timeout: 15_000}),
+      await screen.findByTestId(
+        'tabBarButtonConfiguracoes',
+        {},
+        {timeout: 15_000},
+      ),
     );
     await fireEvent.press(
       await screen.findByTestId(
-        'MENU.trocar-organizacao',
+        'settingsSwitchTerritoryButton',
         {},
         {timeout: 15_000},
       ),
@@ -901,7 +1017,7 @@ describe('RootStackNavigator startup gate (SPEC 10.1)', () => {
       () =>
         expect(
           mockNavigation.getRootState().routes.map(route => route.name),
-        ).toEqual(['Home', 'Organizations']),
+        ).toEqual(['Home', 'AppSettings', 'Organizations']),
       {timeout: 15_000},
     );
     expect(

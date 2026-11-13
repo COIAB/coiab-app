@@ -3,11 +3,15 @@ import * as v from 'valibot';
 import {
   AREAS,
   type Area,
+  type ArquivoRemoto,
+  type EstadoArquivoRemoto,
   type EstadoOrganizacoes,
+  type EstadoSlotArquivoRemoto,
   type EtapaArea,
   type OrganizacaoLocal,
   type TemplateRef,
 } from './documento';
+import {estadoAgregado} from './arquivoRemoto';
 
 /**
  * The durable COIAB organization layer (SPEC A §4.2): one versioned product
@@ -25,7 +29,10 @@ import {
  */
 export type {
   Area,
+  ArquivoRemoto,
+  EstadoArquivoRemoto,
   EstadoOrganizacoes,
+  EstadoSlotArquivoRemoto,
   EtapaArea,
   OrganizacaoLocal,
   TemplateRef,
@@ -54,6 +61,39 @@ export const EtapaAreaSchema = v.object({
   idsAntesDaCriacao: v.nullable(v.array(v.string())),
 });
 
+const ESTADOS_ARQUIVO_REMOTO = [
+  'pendente',
+  'aplicando',
+  'removendo',
+  'removido',
+  'concluido',
+  'falha_recuperavel',
+] as const;
+
+const EstadoSlotArquivoRemotoSchema = v.object({
+  estado: v.picklist(ESTADOS_ARQUIVO_REMOTO),
+  tentativaId: v.optional(v.string()),
+  remocaoId: v.optional(v.string()),
+  // Archive-server identity of the slot (#142 11ª rodada). These fields are
+  // part of the PERSISTED contract, not just the in-memory type: a `removendo`
+  // slot rehydrated after a restart must still tell Core WHICH server to
+  // query, even when the hostname used to reach it changed.
+  baseUrl: v.optional(v.string()),
+  deviceId: v.optional(v.string()),
+  iniciadaEm: v.optional(v.number()),
+  replayConsumido: v.optional(v.boolean()),
+  erro: v.optional(v.string()),
+});
+
+const ArquivoRemotoSchema = v.object({
+  url: v.string(),
+  estado: v.picklist(ESTADOS_ARQUIVO_REMOTO),
+  slots: v.object({
+    m: EstadoSlotArquivoRemotoSchema,
+    a: EstadoSlotArquivoRemotoSchema,
+  }),
+});
+
 const OrganizacaoLocalSchema = v.object({
   id: v.string(),
   nome: v.string(),
@@ -71,6 +111,10 @@ const OrganizacaoLocalSchema = v.object({
       ocorridoEm: v.string(),
     }),
   ),
+  // A corrupt optional block is DISCARDED, never allowed to invalidate the
+  // whole organization (same contract as every other optional field): the
+  // document stays usable and the archive step can be requested again.
+  arquivoRemoto: v.fallback(v.optional(ArquivoRemotoSchema), undefined),
 });
 
 export const EstadoOrganizacoesSchema = v.object({
@@ -126,6 +170,16 @@ export function derivarProjectIdAtivo(
   if (organizacao.confirmacaoPendente) return null;
 
   return organizacao.materializacao[ativa.area].projectId;
+}
+
+/**
+ * #147: `pronta` is written only after the final conferência (`materializar.ts`
+ * writes `verificado` for both areas BEFORE awaiting it); both areas
+ * `verificado` can be true while the conference is still running or has
+ * failed. This single predicate is the durable proof the preparation finished.
+ */
+export function estaPronta(organizacao: OrganizacaoLocal): boolean {
+  return organizacao.estado === 'pronta';
 }
 
 /**
@@ -257,6 +311,18 @@ export function parseEstadoOrganizacoes(
     if (org.estado === 'pronta' && org.areaEmExecucao !== null) return null;
   }
   if ([...ids].some(id => projects.has(id))) return null;
+  // The persisted aggregate is NOT the source of truth (#147 item 2): a
+  // document written before the aggregate existed, or by a buggy writer, may
+  // carry `concluido` while a slot sits in `falha_recuperavel`. Hydrating that
+  // as-is announces "Ready" and skips the slot's retry, so recompute the
+  // aggregate from the slots with the executor's single precedence rule
+  // (`estadoAgregado`) and keep the slots untouched.
+  for (const org of state.organizacoes) {
+    const arquivo = org.arquivoRemoto;
+    if (!arquivo) continue;
+    const estado = estadoAgregado(arquivo.slots);
+    if (arquivo.estado !== estado) org.arquivoRemoto = {...arquivo, estado};
+  }
   // Stale selection is preserved for explicit recovery, never reassigned.
   return state;
 }

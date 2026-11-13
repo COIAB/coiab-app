@@ -14,12 +14,16 @@ import {useActiveProjectId} from '../../contexts/ActiveProjectIdStoreContext';
 import {
   AREAS,
   derivarProjectIdAtivo,
+  estaPronta,
   type EstadoOrganizacoes,
   type EtapaArea,
   organizacaoEmPreparo,
   type OrganizacaoLocal,
 } from '../../lib/organization/coiabOrganizations';
 import {DARK_GREY, RED} from '../../lib/styles';
+import {useUserProfileState} from '../../contexts/UserProfileStoreContext';
+import {useOrganizationMaterializer} from '../../contexts/OrganizationMaterializerContext';
+import type {EstadoArquivoRemoto} from '../../lib/organization/documento';
 
 /** SPEC B §3.2:68 — 30 s without conclusion shows the notice; never a retry. */
 const AVISO_DEMORA_MS = 30_000;
@@ -30,11 +34,11 @@ const m = defineMessages({
   // and the open/recovery states.
   preparingTitle: {
     id: '$1screens.OrganizationSetup.preparingTitle',
-    defaultMessage: 'Preparing your organization…',
+    defaultMessage: 'Preparing your territory…',
   },
   preparingStepA11y: {
     id: '$1screens.OrganizationSetup.preparingStepA11y',
-    defaultMessage: 'Preparing your organization',
+    defaultMessage: 'Preparing your territory',
   },
   preparingSlowNotice: {
     id: '$1screens.OrganizationSetup.preparingSlowNotice',
@@ -67,9 +71,42 @@ const m = defineMessages({
     id: '$1screens.OrganizationSetup.areaNotComplete',
     defaultMessage: 'Not completed',
   },
+  archiveRow: {
+    id: '$1screens.OrganizationSetup.archiveRow',
+    defaultMessage: 'Remote archive',
+  },
+  archivePending: {
+    id: '$1screens.OrganizationSetup.archivePending',
+    defaultMessage: 'Pending',
+  },
+  archiveApplying: {
+    id: '$1screens.OrganizationSetup.archiveApplying',
+    defaultMessage: 'Adding',
+  },
+  archiveDone: {
+    id: '$1screens.OrganizationSetup.archiveDone',
+    defaultMessage: 'Ready',
+  },
+  archiveFailed: {
+    id: '$1screens.OrganizationSetup.archiveFailed',
+    defaultMessage: 'Not added',
+  },
+  retryArchiveBlocked: {
+    id: '$1screens.OrganizationSetup.retryArchiveBlocked',
+    defaultMessage: 'Finish the preparation before retrying the archive.',
+  },
+  retryArchiveButton: {
+    id: '$1screens.OrganizationSetup.retryArchiveButton',
+    defaultMessage: 'Try again',
+    description: 'Retries applying the remote archive to this territory only',
+  },
+  retryArchiveInProgress: {
+    id: '$1screens.OrganizationSetup.retryArchiveInProgress',
+    defaultMessage: 'Wait for the current upload to finish, then try again.',
+  },
   failureTitle: {
     id: '$1screens.OrganizationSetup.failureTitle',
-    defaultMessage: 'Could not finish creating the organization.',
+    defaultMessage: 'Could not finish creating the territory.',
   },
   failureBody: {
     id: '$1screens.OrganizationSetup.failureBody',
@@ -81,7 +118,7 @@ const m = defineMessages({
   },
   createdTitle: {
     id: '$1screens.OrganizationSetup.createdTitle',
-    defaultMessage: 'Organization created',
+    defaultMessage: 'Territory created',
   },
   createdBody: {
     id: '$1screens.OrganizationSetup.createdBody',
@@ -90,7 +127,7 @@ const m = defineMessages({
   },
   openOrganizationButton: {
     id: '$1screens.OrganizationSetup.openOrganizationButton',
-    defaultMessage: 'Open organization',
+    defaultMessage: 'Open territory',
   },
   backButton: {
     id: '$1screens.OrganizationSetup.backButton',
@@ -99,7 +136,7 @@ const m = defineMessages({
   },
   unavailableTitle: {
     id: '$1screens.OrganizationSetup.unavailableTitle',
-    defaultMessage: 'Could not open your organization',
+    defaultMessage: 'Could not open your territory',
     description:
       'A settled organization the engine could not open (SPEC B §4.4:120 / SPEC A §6.2:214, “Organização indisponível”)',
   },
@@ -111,8 +148,7 @@ const m = defineMessages({
   },
   pendingWork: {
     id: '$1screens.OrganizationSetup.pendingWork',
-    defaultMessage:
-      'Finish or discard the record before switching organization',
+    defaultMessage: 'Finish or discard the record before switching territory',
     description:
       'Blocked boot with work in progress (SPEC A §4.4:149 canonical pending-work string, CA15)',
   },
@@ -122,13 +158,13 @@ const m = defineMessages({
   backBlocked: {
     id: '$1screens.OrganizationSetup.backBlocked',
     defaultMessage:
-      'You cannot leave this screen while an organization operation is in progress.',
+      'You cannot leave this screen while a territory operation is in progress.',
     description:
       'Shown when a back attempt is prevented (SPEC B §3.2:64/:68, Fase 5)',
   },
   switchOrganization: {
     id: '$1Navigation.Menu.switchOrganization',
-    defaultMessage: 'Switch organization',
+    defaultMessage: 'Switch territory',
     // SPEC A §6.1:201 — opens the modal Organizations selector (§7:226).
     // pt-BR ships the verbatim §6.1 string "Trocar de organização".
     description: 'Drawer menu entry that opens the organization selector',
@@ -139,7 +175,7 @@ const m = defineMessages({
   // onboarding title.
   createOrganization: {
     id: '$1screens.OrganizationSetup.createOrganization',
-    defaultMessage: 'Create Organization',
+    defaultMessage: 'Create Territory',
   },
 });
 
@@ -152,6 +188,27 @@ function statusMessageForEtapa(etapa: EtapaArea['etapa']) {
       return m.areaReady;
     default:
       return m.areaPreparing;
+  }
+}
+
+/** The journal's remote-archive states, in the screen's own vocabulary. */
+function archiveStatusMessage(estado: EstadoArquivoRemoto) {
+  switch (estado) {
+    case 'pendente':
+      return m.archivePending;
+    case 'aplicando':
+      return m.archiveApplying;
+    case 'removendo':
+      // A removal is a live journal operation, so it shares the applying
+      // vocabulary while Core/checkpoint reconciliation finishes.
+      return m.archiveApplying;
+    case 'removido':
+      // The archive was removed: it is not archived on the server anymore.
+      return m.archiveFailed;
+    case 'concluido':
+      return m.archiveDone;
+    case 'falha_recuperavel':
+      return m.archiveFailed;
   }
 }
 
@@ -184,6 +241,28 @@ function AreaStepRows({organizacao}: {organizacao: OrganizacaoLocal}) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+/**
+ * #142: the remote archive is a step of the SAME journal, so its progress is
+ * shown beside the local areas. A failure is recoverable and NEVER gates the
+ * organization's `pronta` state or its "Abrir território" action.
+ */
+function ArchiveStepRow({organizacao}: {organizacao: OrganizacaoLocal}) {
+  const {formatMessage: t} = useIntl();
+  const arquivo = organizacao.arquivoRemoto;
+  if (!arquivo) return null;
+  const failed = arquivo.estado === 'falha_recuperavel';
+  return (
+    <View style={styles.row} testID="ORG.provisioning-archive-row">
+      <BodyText style={styles.rowArea}>{t(m.archiveRow)}</BodyText>
+      <BodyText
+        testID="ORG.provisioning-archive-status"
+        style={failed ? styles.rowStatusError : styles.rowStatus}>
+        {t(archiveStatusMessage(arquivo.estado))}
+      </BodyText>
     </View>
   );
 }
@@ -224,14 +303,34 @@ function DocumentDrivenProvisioning({
   const {formatMessage: t} = useIntl();
   const {status, error, activate, retryPreparation, recoverPendingWork} =
     useOrganizationActivationContext();
+  const materializador = useOrganizationMaterializer();
   // Review fronteira P1: `preparando` with nothing alive was interrupted
   // (the process died mid-preparation) — the resume is offered instead of a
   // spinner that would never end.
   const interrompida = organizacao.estado === 'preparando' && !preparacaoEmVoo;
+  // #147: the archive retry only runs once preparation is `pronta` — the
+  // materializer's `retomarArquivo` refuses with `em-andamento` before that.
+  // Both areas `verificado` is NOT enough: the final conferência runs after
+  // they are written, so a failed conference leaves them verified while the
+  // organization is `falha_recuperavel`. Mirror the handle's exact predicate
+  // so the surface never offers a button it would refuse.
+  const preparacaoConcluida = estaPronta(organizacao);
   const [ativando, setAtivando] = React.useState(false);
   // Synchronous guard: the disabled prop alone lets a double tap queue a
   // second activate before the rerender publishes it.
   const ativandoRef = React.useRef(false);
+  const [retentandoArquivo, setRetentandoArquivo] = React.useState(false);
+  const retentandoArquivoRef = React.useRef(false);
+  // #147 review: `retomarArquivo` answers `em-andamento` when a send is
+  // already in flight — the button is enabled (the preparation is done) but
+  // the tap must not fail silently. The notice is anchored to the archive
+  // state seen at tap time: it is shown only while the state is unchanged, so
+  // it clears by derivation whenever the document's archive step moves (the
+  // send concluded or failed) and can never stay stuck.
+  const [avisoArquivo, setAvisoArquivo] = React.useState<string | null>(null);
+  const estadoArquivoAtual = organizacao.arquivoRemoto?.estado;
+  const avisoArquivoEmAndamento =
+    avisoArquivo !== null && avisoArquivo === estadoArquivoAtual;
 
   // SPEC A §4.4:149 (CA15): a blocked boot with work in progress maps to the
   // single canonical pending-work string. Reopening the work's persisted
@@ -265,6 +364,21 @@ function DocumentDrivenProvisioning({
     } finally {
       ativandoRef.current = false;
       setAtivando(false);
+    }
+  };
+
+  const tentarArquivoNovamente = async () => {
+    if (retentandoArquivoRef.current || !materializador) return;
+    retentandoArquivoRef.current = true;
+    setRetentandoArquivo(true);
+    try {
+      const resultado = await materializador.retomarArquivo(organizacao.id);
+      setAvisoArquivo(
+        resultado.estado === 'em-andamento' ? (estadoArquivoAtual ?? '') : null,
+      );
+    } finally {
+      retentandoArquivoRef.current = false;
+      setRetentandoArquivo(false);
     }
   };
 
@@ -346,6 +460,36 @@ function DocumentDrivenProvisioning({
         </BodyText>
       )}
       <AreaStepRows organizacao={organizacao} />
+      <ArchiveStepRow organizacao={organizacao} />
+      {organizacao.arquivoRemoto?.estado === 'falha_recuperavel' && (
+        <>
+          {!preparacaoConcluida && (
+            <BodyText
+              style={styles.bodyText}
+              testID="ORG.provisioning-retry-archive-blocked">
+              {t(m.retryArchiveBlocked)}
+            </BodyText>
+          )}
+          <PrimaryButton
+            testID="ORG.provisioning-retry-archive-btn"
+            fullSize
+            text={t(m.retryArchiveButton)}
+            disabled={
+              retentandoArquivo || !materializador || !preparacaoConcluida
+            }
+            onPress={() => {
+              void tentarArquivoNovamente();
+            }}
+          />
+          {avisoArquivoEmAndamento && (
+            <BodyText
+              style={styles.bodyText}
+              testID="ORG.provisioning-retry-archive-in-progress">
+              {t(m.retryArchiveInProgress)}
+            </BodyText>
+          )}
+        </>
+      )}
       {(organizacao.estado === 'falha_recuperavel' || interrompida) && (
         <PrimaryButton
           testID="ORG.provisioning-retry-preparation-btn"
@@ -383,7 +527,7 @@ function DocumentDrivenProvisioning({
       {/* 89 fase 2 (D1/D2): the navigable exits use the same predicates as
       DrawerMenu and live ONLY in this branch — an organization in
       preparation, failure or confirmation owns the surface alone (S5a).
-      Early access gates neither since f12641db; parity is the decision. */}
+      Early access gates neither since #121; parity is the decision. */}
       {indisponivel && trocarOrganizacao && (
         <SecondaryButton
           testID="ORG.provisioning-switch-organization-btn"
@@ -465,13 +609,16 @@ export const OrganizationProvisioning = ({
   );
   const organizacaoDocument =
     emPreparo ?? organizacaoAtiva ?? estado.organizacoes[0];
+  // P1-1: creation is coordinator-only; a participant gets no control.
+  const {coordinationRole} = useUserProfileState();
   const {status: activationStatus, preparacaoViva} =
     useOrganizationActivationContext();
   // The document's own operational id (SPEC A §4.2 regra 5): null while the
   // confirmation is pending or the document cannot be parsed.
   const derivado = derivarProjectIdAtivo(estado);
   const activeProjectId = useActiveProjectId();
-  // SPEC B §3.2:68 — the slow-preparation notice is a presentation concern:
+  // SPEC B §3.2:68 (emendado na #79) — the slow-preparation notice is a
+  // presentation concern:
   // 30 s ON SCREEN in preparando, reset when the document leaves preparando.
   // It never authorizes a retry — a presentation timeout does not cancel a
   // native operation.
@@ -592,7 +739,7 @@ export const OrganizationProvisioning = ({
   const voltarParaAtiva = operandoOutra
     ? () => navigation.popTo('Home', {screen: 'Map'})
     : undefined;
-  // 89 fase 2 (D1/D2) / f12641db: the recovery exits mirror the drawer's
+  // 89 fase 2 (D1/D2) / #121: the recovery exits mirror the drawer's
   // own predicates (DrawerMenu.tsx) with no early-access gate: the selector
   // needs 2+ organizations and a resolvable active selection, creation only
   // the latter. `undefined` renders nothing — no disabled control.
@@ -601,7 +748,7 @@ export const OrganizationProvisioning = ({
       ? () => navigation.navigate('Organizations')
       : undefined;
   const criarOrganizacao =
-    derivado !== null
+    derivado !== null && coordinationRole !== 'participant'
       ? () => navigation.navigate('CreateOrganization')
       : undefined;
 

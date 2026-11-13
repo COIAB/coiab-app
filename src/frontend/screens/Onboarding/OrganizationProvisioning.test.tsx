@@ -1,4 +1,6 @@
 import * as React from 'react';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {Text} from 'react-native';
 import {
   act,
@@ -38,6 +40,23 @@ import {
   type EtapaArea,
   type OrganizacaoLocal,
 } from '../../lib/organization/coiabOrganizations';
+import {
+  createUserProfileStore,
+  UserProfileStoreProvider,
+  type UserProfileStore,
+} from '../../contexts/UserProfileStoreContext';
+
+jest.mock('../../contexts/OrganizationMaterializerContext', () => ({
+  useOrganizationMaterializer: jest.fn(),
+}));
+
+const retomarArquivo: jest.Mock = jest.fn(async () => ({
+  estado: 'concluido',
+  slots: {},
+}));
+const useMaterializadorMock = jest.requireMock(
+  '../../contexts/OrganizationMaterializerContext',
+) as {useOrganizationMaterializer: jest.Mock};
 
 jest.mock('../../contexts/ActiveProjectIdStoreContext', () => {
   const holder = {current: undefined as string | undefined};
@@ -171,6 +190,8 @@ const activationMock = jest.requireMock(
 ) as {__setActivation(activation: unknown): void};
 
 let store: CoiabOrganizationsStore;
+/** #129: the pending remote-archive URL lives in the local profile. */
+let profileStore: UserProfileStore;
 /** The early-access gate the new recovery exits read (89 fase 2, D1). */
 let earlyAccess: EarlyAccessStore;
 
@@ -179,20 +200,35 @@ let earlyAccess: EarlyAccessStore;
  * No navigator: the screen does not navigate — routing belongs to the
  * startup gate and the generation rule, tested at the navigator level.
  */
-function renderScreen() {
-  return render(
+function ProvisioningHarness({showScreen}: {showScreen: boolean}) {
+  return (
     <IntlProvider locale="en" messages={{}}>
       <EarlyAccessStoreProvider value={earlyAccess}>
         <CoiabOrganizationsStoreProvider store={store}>
-          <NavigationContext.Provider value={navigationMock}>
-            <NavigationRouteContext.Provider value={screenProps.route}>
-              <OrganizationProvisioning {...screenProps} />
-            </NavigationRouteContext.Provider>
-          </NavigationContext.Provider>
+          <UserProfileStoreProvider store={profileStore}>
+            {showScreen ? (
+              <NavigationContext.Provider value={navigationMock}>
+                <NavigationRouteContext.Provider value={screenProps.route}>
+                  <OrganizationProvisioning {...screenProps} />
+                </NavigationRouteContext.Provider>
+              </NavigationContext.Provider>
+            ) : (
+              <Text>NO-PROVISIONING</Text>
+            )}
+          </UserProfileStoreProvider>
         </CoiabOrganizationsStoreProvider>
       </EarlyAccessStoreProvider>
-    </IntlProvider>,
+    </IntlProvider>
   );
+}
+
+async function renderScreen(showScreen = true) {
+  const result = await render(<ProvisioningHarness showScreen={showScreen} />);
+  return {
+    ...result,
+    setScreen: (show: boolean) =>
+      result.rerender(<ProvisioningHarness showScreen={show} />),
+  };
 }
 
 function etapa(overrides: Partial<EtapaArea>): EtapaArea {
@@ -269,12 +305,20 @@ const SLOW_NOTICE =
 
 /** Exact English text of the blocked-back notice (Fase 5, ⚑ COPY PENDING). */
 const BACK_BLOCKED =
-  'You cannot leave this screen while an organization operation is in progress.';
+  'You cannot leave this screen while a territory operation is in progress.';
 
 beforeEach(() => {
   jest.clearAllMocks();
   store = createCoiabOrganizationsStore({persist: false});
-  // Early access OFF by default (production's default): since f12641db
+  profileStore = createUserProfileStore();
+  retomarArquivo.mockClear();
+  useMaterializadorMock.useOrganizationMaterializer.mockReturnValue({
+    iniciar: jest.fn(),
+    retomar: jest.fn(),
+    retomarArquivo,
+    solicitarArquivo: jest.fn(),
+  });
+  // Early access OFF by default (production's default): since #121
   // neither the drawer nor this surface gates its organization exits, so
   // every exit asserted below proves the flag is irrelevant. S2 turns it ON
   // to show the same result either way.
@@ -312,7 +356,7 @@ describe('OrganizationProvisioning', () => {
 
       await renderScreen();
 
-      expect(screen.getByText('Organization created')).toBeOnTheScreen();
+      expect(screen.getByText('Territory created')).toBeOnTheScreen();
       expect(
         screen.getByText(
           'Primeira is ready. Monitoring and Alerts are already available.',
@@ -387,7 +431,7 @@ describe('OrganizationProvisioning', () => {
       await renderScreen();
 
       expect(
-        screen.getByText('Could not finish creating the organization.'),
+        screen.getByText('Could not finish creating the territory.'),
       ).toBeOnTheScreen();
       expect(
         screen.getByText(
@@ -421,9 +465,7 @@ describe('OrganizationProvisioning', () => {
       ]);
       await renderScreen();
 
-      expect(
-        screen.getByText('Preparing your organization…'),
-      ).toBeOnTheScreen();
+      expect(screen.getByText('Preparing your territory…')).toBeOnTheScreen();
       expect(screen.getByText('Monitoring')).toBeOnTheScreen();
       expect(screen.getByText('Preparing')).toBeOnTheScreen();
       expect(screen.getByText('Alerts')).toBeOnTheScreen();
@@ -445,6 +487,315 @@ describe('OrganizationProvisioning', () => {
   // acknowledged FIRST, B still `preparando` behind it. The content
   // authority is the organization in preparation — the rows are B's own
   // journal, never the settled first entry's.
+  describe('remote archive journal (#142 fase C1)', () => {
+    function arquivoRemoto(
+      estado: 'pendente' | 'aplicando' | 'concluido' | 'falha_recuperavel',
+    ): NonNullable<OrganizacaoLocal['arquivoRemoto']> {
+      return {
+        url: 'https://arquivo.example/',
+        estado,
+        slots: {
+          m: {estado},
+          a: {estado},
+        },
+      };
+    }
+
+    test('arquivo falhou, abrir continua disponível e retry usa o id correto', async () => {
+      // Another organization comes first in the document: the surface must
+      // show the ACTIVE one and retry ITS archive, never the first entry.
+      seedDocument(
+        [
+          organizacao({
+            id: 'org-0',
+            estado: 'pronta',
+            confirmacaoPendente: false,
+            materializacao: PAR_PRONTA_B,
+          }),
+          organizacao({
+            id: 'org-1',
+            estado: 'pronta',
+            confirmacaoPendente: true,
+            materializacao: PAR_PRONTA,
+            arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+          }),
+        ],
+        {organizacaoId: 'org-1', area: 'monitoramento'},
+      );
+
+      await renderScreen();
+
+      expect(screen.getByText('Not added')).toBeOnTheScreen();
+
+      // The archive failure never blocks opening a ready organization.
+      const abrir = screen.getByTestId(
+        'ORG.provisioning-open-organization-btn',
+      );
+      expect(abrir).toBeEnabled();
+      await act(async () => {
+        await userEvent.setup().press(abrir);
+      });
+      await waitFor(() => {
+        expect(activate).toHaveBeenCalledWith('org-1', {acknowledge: true});
+      });
+
+      await act(async () => {
+        await userEvent
+          .setup()
+          .press(screen.getByTestId('ORG.provisioning-retry-archive-btn'));
+      });
+      expect(retomarArquivo).toHaveBeenCalledTimes(1);
+      expect(retomarArquivo).toHaveBeenCalledWith('org-1');
+    });
+
+    test.each([
+      ['pendente', 'Pending'],
+      ['aplicando', 'Adding'],
+      ['concluido', 'Ready'],
+    ] as const)(
+      'situação %s do arquivo remoto aparece como %s',
+      async (estado, texto) => {
+        seedDocument([
+          organizacao({
+            estado: 'pronta',
+            confirmacaoPendente: true,
+            materializacao: PAR_PRONTA,
+            arquivoRemoto: arquivoRemoto(estado),
+          }),
+        ]);
+
+        await renderScreen();
+
+        expect(
+          screen.getByTestId('ORG.provisioning-archive-status'),
+        ).toHaveTextContent(texto);
+        expect(
+          screen.queryByTestId('ORG.provisioning-retry-archive-btn'),
+        ).not.toBeOnTheScreen();
+      },
+    );
+
+    test('uma organização sem arquivo remoto não mostra a linha do arquivo', async () => {
+      seedDocument([
+        organizacao({
+          estado: 'pronta',
+          confirmacaoPendente: true,
+          materializacao: PAR_PRONTA,
+        }),
+      ]);
+
+      await renderScreen();
+
+      expect(
+        screen.queryByTestId('ORG.provisioning-archive-row'),
+      ).not.toBeOnTheScreen();
+      expect(
+        screen.queryByTestId('ORG.provisioning-retry-archive-btn'),
+      ).not.toBeOnTheScreen();
+    });
+
+    test('retry do arquivo usa o id da organização em confirmação, não o índice 0', async () => {
+      // `organizacaoEmPreparo` also selects a ready org with a pending
+      // confirmation; the retry acts on that organization's id, never on
+      // `organizacoes[0]`.
+      seedDocument([
+        organizacao({
+          id: 'org-0',
+          estado: 'pronta',
+          confirmacaoPendente: false,
+          materializacao: PAR_PRONTA_B,
+          arquivoRemoto: arquivoRemoto('concluido'),
+        }),
+        organizacao({
+          id: 'org-1',
+          estado: 'pronta',
+          confirmacaoPendente: true,
+          materializacao: PAR_PRONTA,
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      await act(async () => {
+        await userEvent
+          .setup()
+          .press(screen.getByTestId('ORG.provisioning-retry-archive-btn'));
+      });
+      expect(retomarArquivo).toHaveBeenCalledWith('org-1');
+      expect(retomarArquivo).not.toHaveBeenCalledWith('org-0');
+    });
+
+    test('retry do arquivo fica desabilitado até a preparação concluir', async () => {
+      // Areas not both verified yet: `retomarArquivo` would refuse with
+      // `em-andamento`, so the surface must not offer an actionable button.
+      seedDocument([
+        organizacao({
+          estado: 'falha_recuperavel',
+          materializacao: {
+            monitoramento: etapa({
+              etapa: 'verificado',
+              projectId: 'proj-m-1',
+              template: {versao: '1', hash: 'm'},
+            }),
+            alertas: etapa({etapa: 'criado', projectId: 'proj-a-1'}),
+          },
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-archive-btn'),
+      ).toBeDisabled();
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-archive-blocked'),
+      ).toBeOnTheScreen();
+      expect(
+        screen.getByText('Finish the preparation before retrying the archive.'),
+      ).toBeOnTheScreen();
+    });
+
+    test('retry do arquivo continua bloqueado quando as áreas estão verificadas mas a conferência falhou', async () => {
+      // #147 P2: `verificado` is written for both areas BEFORE the final
+      // conferência. A conference failure leaves them verified while the
+      // organization is `falha_recuperavel` — only `pronta` proves it passed.
+      seedDocument([
+        organizacao({
+          estado: 'falha_recuperavel',
+          materializacao: PAR_PRONTA,
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-archive-btn'),
+      ).toBeDisabled();
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-archive-blocked'),
+      ).toBeOnTheScreen();
+      expect(
+        screen.getByText('Finish the preparation before retrying the archive.'),
+      ).toBeOnTheScreen();
+      expect(retomarArquivo).not.toHaveBeenCalled();
+    });
+
+    test('retry do arquivo fica habilitado com a preparação concluída', async () => {
+      seedDocument([
+        organizacao({
+          estado: 'pronta',
+          confirmacaoPendente: true,
+          materializacao: PAR_PRONTA,
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-archive-btn'),
+      ).toBeEnabled();
+      expect(
+        screen.queryByTestId('ORG.provisioning-retry-archive-blocked'),
+      ).not.toBeOnTheScreen();
+    });
+
+    test('retry do arquivo que encontra envio em andamento mostra o aviso', async () => {
+      // The preparation is complete, so the button is enabled; the engine's
+      // own answer (`em-andamento`) is what the surface must explain.
+      retomarArquivo.mockResolvedValueOnce({estado: 'em-andamento', slots: {}});
+      seedDocument([
+        organizacao({
+          estado: 'pronta',
+          confirmacaoPendente: true,
+          materializacao: PAR_PRONTA,
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      await act(async () => {
+        await userEvent
+          .setup()
+          .press(screen.getByTestId('ORG.provisioning-retry-archive-btn'));
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('ORG.provisioning-retry-archive-in-progress'),
+        ).toBeOnTheScreen();
+      });
+      expect(
+        screen.getByText(
+          'Wait for the current upload to finish, then try again.',
+        ),
+      ).toBeOnTheScreen();
+    });
+
+    test('retry do arquivo concluído não mostra o aviso de envio em andamento', async () => {
+      // Default mock answers `concluido`: nothing is in flight, so the
+      // notice must stay absent.
+      seedDocument([
+        organizacao({
+          estado: 'pronta',
+          confirmacaoPendente: true,
+          materializacao: PAR_PRONTA,
+          arquivoRemoto: arquivoRemoto('falha_recuperavel'),
+        }),
+      ]);
+
+      await renderScreen();
+
+      await act(async () => {
+        await userEvent
+          .setup()
+          .press(screen.getByTestId('ORG.provisioning-retry-archive-btn'));
+      });
+
+      expect(retomarArquivo).toHaveBeenCalledWith('org-1');
+      expect(
+        screen.queryByTestId('ORG.provisioning-retry-archive-in-progress'),
+      ).not.toBeOnTheScreen();
+    });
+
+    test('pt-BR catalog carries the archive row, statuses and retry copy', () => {
+      // Read the REAL source catalog compiled into the app (`messages/pt-BR`
+      // → `translations/pt.json`), not a test-local message map.
+      const catalogo = JSON.parse(
+        fs.readFileSync(
+          path.resolve(__dirname, '../../../../messages/pt-BR/primary.json'),
+          'utf8',
+        ),
+      ) as Record<string, {message: string}>;
+
+      expect(catalogo['$1screens.OrganizationSetup.archiveRow']?.message).toBe(
+        'Arquivo remoto',
+      );
+      expect(
+        catalogo['$1screens.OrganizationSetup.archivePending']?.message,
+      ).toBe('Pendente');
+      expect(
+        catalogo['$1screens.OrganizationSetup.archiveApplying']?.message,
+      ).toBe('Adicionando');
+      expect(catalogo['$1screens.OrganizationSetup.archiveDone']?.message).toBe(
+        'Pronto',
+      );
+      expect(
+        catalogo['$1screens.OrganizationSetup.archiveFailed']?.message,
+      ).toBe('Não adicionado');
+      expect(
+        catalogo['$1screens.OrganizationSetup.retryArchiveButton']?.message,
+      ).toBe('Tentar novamente');
+      expect(
+        catalogo['$1screens.OrganizationSetup.retryArchiveBlocked']?.message,
+      ).toBe('Conclua a preparação antes de tentar o arquivo novamente.');
+    });
+  });
+
   describe('multi-organization document', () => {
     test("renders the preparing organization's area rows, not the settled first one's", async () => {
       seedDocument([
@@ -465,9 +816,7 @@ describe('OrganizationProvisioning', () => {
       ]);
       await renderScreen();
 
-      expect(
-        screen.getByText('Preparing your organization…'),
-      ).toBeOnTheScreen();
+      expect(screen.getByText('Preparing your territory…')).toBeOnTheScreen();
       // B's rows: one preparing, one waiting.
       expect(screen.getByText('Monitoring')).toBeOnTheScreen();
       expect(screen.getByText('Preparing')).toBeOnTheScreen();
@@ -510,7 +859,7 @@ describe('OrganizationProvisioning', () => {
         await renderScreen();
 
         expect(
-          screen.getByText('Could not open your organization'),
+          screen.getByText('Could not open your territory'),
         ).toBeOnTheScreen();
         // The failed open is not the confirmation (no Abrir organização)
         // and not a preparation retry.
@@ -671,6 +1020,21 @@ describe('OrganizationProvisioning', () => {
       ).toBeEnabled();
     });
 
+    test('a participant gets no creation exit (P1-1)', async () => {
+      seedDocument([prontaAtiva.organizacao], ativaA);
+      ativarRecovery('recovery', 'unavailable');
+      profileStore.actions.setCoordinationRole('participant');
+      await renderScreen();
+
+      expect(
+        screen.queryByTestId('ORG.provisioning-create-organization-btn'),
+      ).not.toBeOnTheScreen();
+      // The other exits are unaffected.
+      expect(
+        screen.getByTestId('ORG.provisioning-retry-activation-btn'),
+      ).toBeOnTheScreen();
+    });
+
     // (T5a) Every non-`indisponivel` state of the surface must stay exactly
     // as it is today — no name, no exits. Guard: green in the base state.
     test.each([
@@ -717,7 +1081,7 @@ describe('OrganizationProvisioning', () => {
       },
       {
         linha: 'B ready with pending confirmation',
-        textoVisivel: 'Organization created',
+        textoVisivel: 'Territory created',
         montar: () => {
           seedDocument(
             [prontaAtiva.organizacao, segundaProntaComConfirmacao()],
@@ -730,8 +1094,7 @@ describe('OrganizationProvisioning', () => {
       },
       {
         linha: 'unavailable + pending-work',
-        textoVisivel:
-          'Finish or discard the record before switching organization',
+        textoVisivel: 'Finish or discard the record before switching territory',
         montar: () => {
           seedDocument([prontaAtiva.organizacao, segundaPronta()], ativaA);
           ativarRecovery('unavailable', 'pending-work');
@@ -814,34 +1177,36 @@ describe('OrganizationProvisioning', () => {
         <IntlProvider locale="en" messages={{}}>
           <EarlyAccessStoreProvider value={earlyAccess}>
             <CoiabOrganizationsStoreProvider store={store}>
-              <NavigationContainer
-                ref={navigationRef}
-                initialState={{
-                  index: 1,
-                  routes: [
-                    {name: 'OrganizationProvisioning'},
-                    {
-                      name: 'RemovedFromProjectBottomSheet',
-                      params: {projectId: 'proj-m-1'},
-                    },
-                  ],
-                }}>
-                <NavStack.Navigator>
-                  {/* Home is REGISTERED so a reset fired during the hold
+              <UserProfileStoreProvider store={profileStore}>
+                <NavigationContainer
+                  ref={navigationRef}
+                  initialState={{
+                    index: 1,
+                    routes: [
+                      {name: 'OrganizationProvisioning'},
+                      {
+                        name: 'RemovedFromProjectBottomSheet',
+                        params: {projectId: 'proj-m-1'},
+                      },
+                    ],
+                  }}>
+                  <NavStack.Navigator>
+                    {/* Home is REGISTERED so a reset fired during the hold
                   would land somewhere real instead of silently warning —
                   the routes assertion below is what pins the hold. */}
-                  <NavStack.Screen name="Home" component={HomeStub} />
-                  <NavStack.Screen
-                    name="OrganizationProvisioning"
-                    component={OrganizationProvisioning}
-                  />
-                  <NavStack.Screen
-                    name="RemovedFromProjectBottomSheet"
-                    component={SheetStub}
-                    options={{presentation: 'transparentModal'}}
-                  />
-                </NavStack.Navigator>
-              </NavigationContainer>
+                    <NavStack.Screen name="Home" component={HomeStub} />
+                    <NavStack.Screen
+                      name="OrganizationProvisioning"
+                      component={OrganizationProvisioning}
+                    />
+                    <NavStack.Screen
+                      name="RemovedFromProjectBottomSheet"
+                      component={SheetStub}
+                      options={{presentation: 'transparentModal'}}
+                    />
+                  </NavStack.Navigator>
+                </NavigationContainer>
+              </UserProfileStoreProvider>
             </CoiabOrganizationsStoreProvider>
           </EarlyAccessStoreProvider>
         </IntlProvider>,
@@ -921,7 +1286,7 @@ describe('OrganizationProvisioning', () => {
       // The fallback entry owns the rows and the title, but the name is the
       // SELECTION's — and 'org-fantasma' resolves to nothing.
       expect(
-        screen.getByText('Could not open your organization'),
+        screen.getByText('Could not open your territory'),
       ).toBeOnTheScreen();
       expect(
         screen.queryByTestId('ORG.provisioning-unavailable-name'),
@@ -968,7 +1333,7 @@ describe('OrganizationProvisioning', () => {
 
       expect(
         screen.getByText(
-          'Finish or discard the record before switching organization',
+          'Finish or discard the record before switching territory',
         ),
       ).toBeOnTheScreen();
       expect(recoverPendingWork).toHaveBeenCalledTimes(1);
@@ -1257,20 +1622,22 @@ describe('OrganizationProvisioning', () => {
         <IntlProvider locale="en" messages={{}}>
           <EarlyAccessStoreProvider value={earlyAccess}>
             <CoiabOrganizationsStoreProvider store={store}>
-              <NavigationContainer ref={navigationRef}>
-                <NavStack.Navigator initialRouteName="OrganizationProvisioning">
-                  <NavStack.Screen name="Home" component={HomeStub} />
-                  <NavStack.Screen
-                    name="OrganizationProvisioning"
-                    component={OrganizationProvisioning}
-                  />
-                </NavStack.Navigator>
-              </NavigationContainer>
+              <UserProfileStoreProvider store={profileStore}>
+                <NavigationContainer ref={navigationRef}>
+                  <NavStack.Navigator initialRouteName="OrganizationProvisioning">
+                    <NavStack.Screen name="Home" component={HomeStub} />
+                    <NavStack.Screen
+                      name="OrganizationProvisioning"
+                      component={OrganizationProvisioning}
+                    />
+                  </NavStack.Navigator>
+                </NavigationContainer>
+              </UserProfileStoreProvider>
             </CoiabOrganizationsStoreProvider>
           </EarlyAccessStoreProvider>
         </IntlProvider>,
       );
-      await screen.findByText('Preparing your organization…');
+      await screen.findByText('Preparing your territory…');
 
       await act(async () => {
         navigationRef.reset({index: 0, routes: [{name: 'Home'}]});
@@ -1278,7 +1645,7 @@ describe('OrganizationProvisioning', () => {
 
       expect(screen.getByText('HOME-REACHED')).toBeOnTheScreen();
       expect(
-        screen.queryByText('Preparing your organization…'),
+        screen.queryByText('Preparing your territory…'),
       ).not.toBeOnTheScreen();
     });
   });
@@ -1321,9 +1688,7 @@ describe('OrganizationProvisioning', () => {
       await renderScreen();
 
       // The surface stays the owner of B's preparation…
-      expect(
-        screen.getByText('Preparing your organization…'),
-      ).toBeOnTheScreen();
+      expect(screen.getByText('Preparing your territory…')).toBeOnTheScreen();
       // …so the validated pair (ready + matching ids) must not bounce Home.
       expect(navigationReset).not.toHaveBeenCalled();
     });
@@ -1360,11 +1725,9 @@ describe('OrganizationProvisioning', () => {
       const user = userEvent.setup();
       await renderScreen();
 
+      expect(screen.getByText('Preparing your territory…')).toBeOnTheScreen();
       expect(
-        screen.getByText('Preparing your organization…'),
-      ).toBeOnTheScreen();
-      expect(
-        screen.queryByLabelText('Preparing your organization'),
+        screen.queryByLabelText('Preparing your territory'),
       ).not.toBeOnTheScreen();
       expect(backHandlerMock.default.addEventListener).not.toHaveBeenCalled();
       expect(
@@ -1418,7 +1781,7 @@ describe('OrganizationProvisioning', () => {
       await renderScreen();
 
       expect(
-        screen.getByLabelText('Preparing your organization'),
+        screen.getByLabelText('Preparing your territory'),
       ).toBeOnTheScreen();
       expect(
         screen.queryByTestId('ORG.provisioning-back-to-active-btn'),
@@ -1515,31 +1878,33 @@ describe('OrganizationProvisioning', () => {
         <IntlProvider locale="en" messages={{}}>
           <EarlyAccessStoreProvider value={earlyAccess}>
             <CoiabOrganizationsStoreProvider store={store}>
-              <NavigationContainer
-                ref={navigationRef}
-                initialState={{
-                  index: 1,
-                  routes: [
-                    {name: 'OrganizationProvisioning'},
-                    {
-                      name: 'RemovedFromProjectBottomSheet',
-                      params: {projectId: 'proj-m-1'},
-                    },
-                  ],
-                }}>
-                <NavStack.Navigator>
-                  <NavStack.Screen name="Home" component={HomeStub} />
-                  <NavStack.Screen
-                    name="OrganizationProvisioning"
-                    component={OrganizationProvisioning}
-                  />
-                  <NavStack.Screen
-                    name="RemovedFromProjectBottomSheet"
-                    component={SheetStub}
-                    options={{presentation: 'transparentModal'}}
-                  />
-                </NavStack.Navigator>
-              </NavigationContainer>
+              <UserProfileStoreProvider store={profileStore}>
+                <NavigationContainer
+                  ref={navigationRef}
+                  initialState={{
+                    index: 1,
+                    routes: [
+                      {name: 'OrganizationProvisioning'},
+                      {
+                        name: 'RemovedFromProjectBottomSheet',
+                        params: {projectId: 'proj-m-1'},
+                      },
+                    ],
+                  }}>
+                  <NavStack.Navigator>
+                    <NavStack.Screen name="Home" component={HomeStub} />
+                    <NavStack.Screen
+                      name="OrganizationProvisioning"
+                      component={OrganizationProvisioning}
+                    />
+                    <NavStack.Screen
+                      name="RemovedFromProjectBottomSheet"
+                      component={SheetStub}
+                      options={{presentation: 'transparentModal'}}
+                    />
+                  </NavStack.Navigator>
+                </NavigationContainer>
+              </UserProfileStoreProvider>
             </CoiabOrganizationsStoreProvider>
           </EarlyAccessStoreProvider>
         </IntlProvider>,

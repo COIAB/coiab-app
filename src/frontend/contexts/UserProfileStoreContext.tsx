@@ -13,15 +13,40 @@ import {MMKVStoreInitializer} from '../hooks/persistedState/createPersistedState
 // NOTE: Do not change!
 export const COIAB_USER_PROFILE_STORAGE_KEY = 'CoiabUserProfile' as const;
 
+export type CoordinationRole = 'coordinator' | 'participant' | null;
+
 export type UserProfileState = {
   ethnicity: string | null;
   village: string | null;
+  coordinationRole: CoordinationRole;
 };
 
-const PROFILE_VERSION = 2;
+const PROFILE_VERSION = 6;
+// v2 carried ethnicity/village only; hydrating it must not discard the user's
+// profile — the missing role is simply `null` (not answered yet). v3 added the
+// coordination role. The intent-era versions (v4, v5) were never shipped and
+// carried only the removed remote-archive slot, so they are not migrated.
+const LEGACY_PROFILE_VERSION = 2;
+const V3_PROFILE_VERSION = 3;
 
 function emptyProfile(): UserProfileState {
-  return {ethnicity: null, village: null};
+  return {
+    ethnicity: null,
+    village: null,
+    coordinationRole: null,
+  };
+}
+
+function normalizeCoordinationRole(
+  value: unknown,
+): CoordinationRole | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (value === 'coordinator' || value === 'participant') {
+    return value;
+  }
+  return undefined;
 }
 
 function normalizeText(value: string | null): string | null {
@@ -59,7 +84,11 @@ function parseUserProfile(raw: string | null | undefined): UserProfileState {
 
   const {state, version} = envelope as {state?: unknown; version?: unknown};
 
-  if (version !== PROFILE_VERSION) {
+  if (
+    version !== PROFILE_VERSION &&
+    version !== V3_PROFILE_VERSION &&
+    version !== LEGACY_PROFILE_VERSION
+  ) {
     return emptyProfile();
   }
 
@@ -67,9 +96,10 @@ function parseUserProfile(raw: string | null | undefined): UserProfileState {
     return emptyProfile();
   }
 
-  const {ethnicity, village} = state as {
+  const {ethnicity, village, coordinationRole} = state as {
     ethnicity?: unknown;
     village?: unknown;
+    coordinationRole?: unknown;
   };
 
   if (ethnicity !== null && typeof ethnicity !== 'string') {
@@ -80,9 +110,19 @@ function parseUserProfile(raw: string | null | undefined): UserProfileState {
     return emptyProfile();
   }
 
+  const role =
+    coordinationRole === undefined
+      ? null
+      : normalizeCoordinationRole(coordinationRole);
+
+  if (role === undefined) {
+    return emptyProfile();
+  }
+
   return {
     ethnicity: normalizeText(ethnicity),
     village: normalizeText(village),
+    coordinationRole: role,
   };
 }
 
@@ -128,6 +168,7 @@ export function createUserProfileStore({
           state: {
             ethnicity: next.ethnicity,
             village: next.village,
+            coordinationRole: next.coordinationRole,
           },
           version: PROFILE_VERSION,
         }),
@@ -142,6 +183,9 @@ export function createUserProfileStore({
     },
     setVillage: (text: string) => {
       store.setState({village: text.trim() || null});
+    },
+    setCoordinationRole: (role: CoordinationRole) => {
+      store.setState({coordinationRole: role});
     },
   };
 

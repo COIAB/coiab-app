@@ -21,6 +21,8 @@ import HeartCheckIcon from '../../images/HeartCheck.svg';
 import AngleRulerIcon from '../../images/AngleRuler.svg';
 import {isQABuild} from '../../lib/appVariant';
 import {useQADeviceName} from '../../contexts/QADeviceNameStoreContext';
+import {useUserProfileState} from '../../contexts/UserProfileStoreContext';
+import {useCoiabOrganizationsState} from '../../contexts/CoiabOrganizationsStoreContext';
 
 const m = defineMessages({
   title: {
@@ -121,13 +123,8 @@ const m = defineMessages({
   },
   organization: {
     id: '$1Screens.Settings.AppSettings.organization',
-    defaultMessage: 'Organization',
+    defaultMessage: 'Territory',
     description: 'Section header for the migrated menu entries',
-  },
-  backgroundMaps: {
-    id: '$1Screens.Settings.AppSettings.backgroundMaps',
-    defaultMessage: 'Background Map',
-    description: 'Migrated menu entry: background maps',
   },
   projectSettings: {
     id: '$1Screens.Settings.AppSettings.projectSettings',
@@ -138,6 +135,21 @@ const m = defineMessages({
     id: '$1Screens.Settings.AppSettings.yourTeam',
     defaultMessage: 'Your Team',
     description: 'Migrated menu entry: your team',
+  },
+  criarOrganizacao: {
+    id: '$1Navigation.Menu.criarOrganizacao',
+    defaultMessage: 'Criar território',
+    description: 'Menu list entry that opens the organization creation flow',
+  },
+  switchOrganizationTitle: {
+    id: '$1Navigation.Menu.switchOrganizationTitle',
+    defaultMessage: 'Trocar de território',
+    description: 'Menu list entry that opens the organization selector',
+  },
+  switchOrganizationSubtitle: {
+    id: '$1Navigation.Menu.switchOrganizationSubtitle',
+    defaultMessage: 'Escolher outro território',
+    description: 'Subtitle of the organization selector menu entry',
   },
 });
 
@@ -166,16 +178,25 @@ export const AppSettings: NativeNavigationComponent<'AppSettings'> = ({
   const hasPasscode = passcode !== null;
   const qaDeviceName = useQADeviceName();
   // Acessos removidos da Página Entroncamento migram para cá: participantes
-  // não perdem a equipe ("Convidar" no menu é coord-only) e Background
-  // Maps segue sem restrição de papel.
+  // não perdem a equipe ("Convidar" no menu é coord-only).
   const {projectId} = useActiveProject();
   const {role} = useProjectRoleAndDetails(projectId);
+  const {coordinationRole} = useUserProfileState();
+  const estadoOrganizacoes = useCoiabOrganizationsState();
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <BodyText variant="tinyMeta" style={styles.sectionHeader}>
-        {formatMessage(m.organization)}
-      </BodyText>
+      {/* A seção "Territory" só tem linhas quando ao menos uma das
+          condições abaixo é verdadeira. Sem esta guarda, solo + participant
+          com menos de duas organizações renderiza o cabeçalho sem nenhuma
+          linha abaixo (a antiga linha "Mapa de fundo" era incondicional). */}
+      {(role !== 'solo' ||
+        coordinationRole !== 'participant' ||
+        estadoOrganizacoes.organizacoes.length >= 2) && (
+        <BodyText variant="tinyMeta" style={styles.sectionHeader}>
+          {formatMessage(m.organization)}
+        </BodyText>
+      )}
       {role !== 'solo' && (
         <SettingsRow
           testID="settingsYourTeamButton"
@@ -212,15 +233,46 @@ export const AppSettings: NativeNavigationComponent<'AppSettings'> = ({
           }
         />
       )}
-      <SettingsRow
-        testID="settingsBackgroundMapsButton"
-        onPress={() => navigation.navigate('BackgroundMaps')}
-        label={formatMessage(m.backgroundMaps)}
-        Icon={<MaterialIcon name="layers" size={24} color={NEW_DARK_GREY} />}
-        EndContent={
-          <MaterialIcon name="chevron-right" size={20} color={NEW_DARK_GREY} />
-        }
-      />
+      {/* Perfis gravados antes da #129 (v2–v5) hidratam `coordinationRole`
+          como `null` ("não respondido"). Exigir `'coordinator'` esconderia a
+          entrada de um coordenador legado — e o menu não tem mais a ação.
+          Por isso o critério é o mesmo da tela de criação: só participante
+          fica de fora (`CreateOrganization` redireciona `'participant'`). */}
+      {coordinationRole !== 'participant' && (
+        <SettingsRow
+          testID="settingsCreateOrganizationButton"
+          onPress={() => navigation.navigate('CreateOrganization')}
+          label={formatMessage(m.criarOrganizacao)}
+          Icon={
+            <MaterialIcon name="business" size={24} color={NEW_DARK_GREY} />
+          }
+          EndContent={
+            <MaterialIcon
+              name="chevron-right"
+              size={20}
+              color={NEW_DARK_GREY}
+            />
+          }
+        />
+      )}
+      {estadoOrganizacoes.organizacoes.length >= 2 && (
+        <SettingsRow
+          testID="settingsSwitchTerritoryButton"
+          onPress={() => navigation.navigate('Organizations')}
+          label={formatMessage(m.switchOrganizationTitle)}
+          subtitle={formatMessage(m.switchOrganizationSubtitle)}
+          Icon={
+            <MaterialIcon name="swap-horiz" size={24} color={NEW_DARK_GREY} />
+          }
+          EndContent={
+            <MaterialIcon
+              name="chevron-right"
+              size={20}
+              color={NEW_DARK_GREY}
+            />
+          }
+        />
+      )}
 
       <BodyText variant="tinyMeta" style={styles.sectionHeader}>
         {formatMessage(m.deviceName)}
@@ -411,6 +463,7 @@ AppSettings.navTitle = m.title;
 
 function SettingsRow({
   label,
+  subtitle,
   onPress,
   testID,
   labelTestID,
@@ -418,6 +471,7 @@ function SettingsRow({
   EndContent,
 }: {
   label: string;
+  subtitle?: string;
   onPress: () => void;
   testID?: string;
   labelTestID?: string;
@@ -427,12 +481,16 @@ function SettingsRow({
   return (
     <TouchableOpacity testID={testID} onPress={onPress} style={styles.row}>
       {Icon}
-      <HeaderText
-        variant="header6"
-        style={styles.rowLabel}
-        testID={labelTestID}>
-        {label}
-      </HeaderText>
+      <View style={styles.rowText}>
+        <HeaderText variant="header6" testID={labelTestID}>
+          {label}
+        </HeaderText>
+        {subtitle ? (
+          <BodyText variant="smallMeta" style={styles.rowSubtitle}>
+            {subtitle}
+          </BodyText>
+        ) : null}
+      </View>
       {EndContent}
     </TouchableOpacity>
   );
@@ -461,8 +519,11 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     minHeight: 54,
   },
-  rowLabel: {
+  rowText: {
     flex: 1,
+  },
+  rowSubtitle: {
+    color: NEW_DARK_GREY,
   },
   actionText: {
     color: COMAPEO_BLUE,

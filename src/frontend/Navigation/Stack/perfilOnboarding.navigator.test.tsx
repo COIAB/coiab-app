@@ -318,6 +318,34 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     MMKVStoreInitializer.removeItem(COIAB_ORGANIZATIONS_STORAGE_KEY);
   });
 
+  test('caso 0a: cold start com papel coordenador abre CreateOrganization (#129)', async () => {
+    await freshSetup.renderNavigationAsync({
+      userProfile: {
+        ethnicity: ETNIA,
+        village: 'Aldeia de teste',
+        coordinationRole: 'coordinator',
+      },
+    });
+
+    expect(
+      await screen.findByTestId('ORG.create-intro-continue-btn'),
+    ).toBeOnTheScreen();
+    expect(nomesDasRotas()).toEqual(['CreateOrganization']);
+  }, 30000);
+
+  test('caso 0b: cold start com papel participante abre JoinOrganizationIntro (#129)', async () => {
+    await freshSetup.renderNavigationAsync({
+      userProfile: {
+        ethnicity: ETNIA,
+        village: 'Aldeia de teste',
+        coordinationRole: 'participant',
+      },
+    });
+
+    expect(await screen.findByText('Wait for an invitation')).toBeOnTheScreen();
+    expect(nomesDasRotas()).toEqual(['JoinOrganizationIntro']);
+  }, 30000);
+
   test('caso 1: cold start sem perfil percorre etnia → aldeia → Success', async () => {
     await freshSetup.renderNavigationAsync({userProfile: null});
 
@@ -338,6 +366,7 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     expect(perfilPersistido()).toEqual({
       ethnicity: ETNIA,
       village: 'Aldeia do caso 1',
+      coordinationRole: null,
     });
   }, 30000);
 
@@ -379,6 +408,7 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     expect(perfilPersistido()).toEqual({
       ethnicity: ETNIA,
       village: null,
+      coordinationRole: null,
     });
 
     await freshSetup.renderNavigationAsync({userProfile: 'keep'});
@@ -403,6 +433,7 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     expect(perfilPersistido()).toEqual({
       ethnicity: ETNIA,
       village: 'Aldeia retomada',
+      coordinationRole: null,
     });
   }, 30000);
 
@@ -425,7 +456,9 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     await preencherAldeia('Aldeia do caso 4a');
     expect(nomesDasRotas()).toEqual(['Success']);
 
-    await fireEvent.press(screen.getByTestId('ONBOARDING.join-org-btn'));
+    await fireEvent.press(
+      screen.getByTestId('ONBOARDING.role-participant-btn'),
+    );
     await waitFor(() =>
       expect(nomesDasRotas()).toEqual([
         'Success',
@@ -466,7 +499,9 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     await act(async () => setMockInvites([markerInvite('invite-no-join')]));
     expect(nomesDasRotas()).toEqual(['Success']);
 
-    await fireEvent.press(screen.getByTestId('ONBOARDING.join-org-btn'));
+    await fireEvent.press(
+      screen.getByTestId('ONBOARDING.role-participant-btn'),
+    );
     await waitFor(() =>
       expect(nomesDasRotas()).toEqual([
         'Success',
@@ -489,7 +524,9 @@ describe('perfil de onboarding no navigator real (#128)', () => {
     // Leaving the profile flow for the join fork is NOT a gated screen: the
     // same listener must now navigate, proving the gate is scoped and the
     // listener was never disabled.
-    await fireEvent.press(screen.getByTestId('ONBOARDING.join-org-btn'));
+    await fireEvent.press(
+      screen.getByTestId('ONBOARDING.role-participant-btn'),
+    );
     await waitFor(() =>
       expect(nomesDasRotas()).toEqual([
         'Success',
